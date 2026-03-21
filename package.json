@@ -1,0 +1,10 @@
+{
+  "name": "amm-dashboard-returns",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node server.mjs"
+  },
+  "type": "module"
+}
