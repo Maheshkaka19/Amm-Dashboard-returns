@@ -1,0 +1,15 @@
+runConfig:
+  cpu: 1
+  memoryMiB: 512
+  minInstances: 0
+
+scripts:
+  buildCommand: npm run build
+  runCommand: npm start
+
+outputFiles:
+  serverApp:
+    include:
+      - dist/**
+      - package.json
+      - package-lock.json
