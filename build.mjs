@@ -11,11 +11,17 @@ fs.rmSync(distDir, { recursive: true, force: true });
 fs.mkdirSync(path.join(distDir, 'public'), { recursive: true });
 fs.cpSync(publicDir, path.join(distDir, 'public'), { recursive: true });
 fs.copyFileSync(path.join(__dirname, 'server.mjs'), path.join(distDir, 'server.mjs'));
+fs.writeFileSync(
+  path.join(distDir, 'build-meta.json'),
+  JSON.stringify(
+    {
+      builtAt: new Date().toISOString(),
+      app: 'AMM Pool ALM Dashboard',
+      runtimeStartCommand: 'node server.mjs'
+    },
+    null,
+    2,
+  ),
+);
 
-const metadata = {
-  builtAt: new Date().toISOString(),
-  app: 'AMM Pool ALM Dashboard',
-};
-fs.writeFileSync(path.join(distDir, 'build-meta.json'), JSON.stringify(metadata, null, 2));
-
-console.log('Build complete: dist/');
+console.log('Build complete: dist/ and source files retained for App Hosting runtime.');

@@ -9,7 +9,7 @@ Firebase App Hosting supports Next.js, Angular, and generic **Node.js apps**. Th
 - `package.json` scripts for `build`, `start`, and `dev`
 - `package-lock.json` so App Hosting can detect the npm project cleanly
 - `apphosting.yaml` to tell App Hosting exactly how to build and run the app
-- a production build step that writes deployable output to `dist/`
+- a production build step that verifies and snapshots the app into `dist/` while runtime still starts directly from `server.mjs`
 
 ## Features
 
@@ -47,7 +47,7 @@ npm start
    firebase login
    ```
 4. In the Firebase console, create a new **App Hosting** backend and connect your GitHub repository.
-5. App Hosting should now recognize this repository as a Node.js app and use `apphosting.yaml` to run `npm run build` and `npm start`.
+5. App Hosting should now recognize this repository as a Node.js app and use `apphosting.yaml` to run `npm run build` and then start the service with `node server.mjs`, which listens on the `PORT` environment variable.
 6. After the first successful deploy, each new push to your connected branch can trigger another rollout.
 
 ## CSV requirements

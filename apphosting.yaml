@@ -5,11 +5,8 @@ runConfig:
 
 scripts:
   buildCommand: npm run build
-  runCommand: npm start
+  runCommand: node server.mjs
 
 outputFiles:
   serverApp:
-    include:
-      - dist/**
-      - package.json
-      - package-lock.json
+    include: [.] 
