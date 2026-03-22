@@ -51,7 +51,7 @@ async function handleRunSimulation() {
 
   runSimulationButton.disabled = true;
   runSimulationButton.textContent = 'Running Simulation...';
-  setStatus('info', 'Processing large datasets and computing whole-unit stock swaps...');
+  setStatus('info', 'Processing large datasets with whole-unit swaps against concentrated pool prices...');
 
   try {
     const [text1, text2] = await Promise.all([asset1File.files[0].text(), asset2File.files[0].text()]);
@@ -93,7 +93,7 @@ function renderMetrics() {
     metricsGrid.innerHTML = `
       <div class="empty-state">
         <h3>No simulation results yet</h3>
-        <p>Upload two CSV files and run the model to see ROI, swap history, impermanent loss, and peak divergence analysis.</p>
+        <p>Upload two CSV files and run the model to see ROI, swap history, and impermanent loss analysis.</p>
       </div>`;
     downloadCsvButton.classList.add('hidden');
     return;
@@ -107,8 +107,8 @@ function renderMetrics() {
     ['Hold Value (Do Nothing)', currencyFormatter.format(state.results.holdValue)],
     ['Pool Asset Value (w/o cash)', currencyFormatter.format(state.results.poolAssetValue)],
     ['Impermanent Loss (IL)', currencyFormatter.format(state.results.impermanentLossInr), `${numberFormatter(2).format(state.results.impermanentLossPct)}% IL`, state.results.impermanentLossPct >= 0],
-    ['Highest Pool Divergence', `${numberFormatter(2).format(state.results.maxDivergencePct)}%`],
     ['Initial Whole Units', `${numberFormatter(0).format(state.results.initialAsset1Units)} / ${numberFormatter(0).format(state.results.initialAsset2Units)}`],
+    ['Final Whole Units', `${numberFormatter(0).format(state.results.finalAsset1Units)} / ${numberFormatter(0).format(state.results.finalAsset2Units)}`],
   ];
 
   metricsGrid.innerHTML = cards.map(([label, value, delta, positive]) => `
@@ -147,7 +147,6 @@ function renderTable() {
             <th>${label2} Price</th>
             <th>${label1} Swapped</th>
             <th>${label2} Swapped</th>
-            <th>Divergence Before Trade</th>
             <th>Brokerage Paid</th>
             <th>Net Profit</th>
             <th>Accumulated Cash</th>
@@ -164,7 +163,6 @@ function renderTable() {
               <td>${currencyFormatter.format(swap.asset2Price)}</td>
               <td>${numberFormatter(0).format(swap.asset1Swapped)}</td>
               <td>${numberFormatter(0).format(swap.asset2Swapped)}</td>
-              <td>${numberFormatter(2).format(swap.divergencePctBeforeTrade)}%</td>
               <td>${currencyFormatter.format(swap.brokeragePaid)}</td>
               <td>${currencyFormatter.format(swap.netProfitInr)}</td>
               <td>${currencyFormatter.format(swap.accumulatedCash)}</td>
@@ -177,8 +175,8 @@ function renderTable() {
 }
 
 function downloadCsv(rows) {
-  const headers = ['Date','Action','Asset_1_Price','Asset_2_Price','Asset_1_Swapped','Asset_2_Swapped','Divergence_Pct_Before_Trade','Brokerage_Paid','Net_Profit_INR','Accumulated_Cash','Real_Asset_1_Balance','Real_Asset_2_Balance'];
-  const csvLines = [headers.join(',')].concat(rows.map((row) => [row.date,row.action,row.asset1Price,row.asset2Price,row.asset1Swapped,row.asset2Swapped,row.divergencePctBeforeTrade,row.brokeragePaid,row.netProfitInr,row.accumulatedCash,row.realAsset1Balance,row.realAsset2Balance].join(',')));
+  const headers = ['Date','Action','Asset_1_Price','Asset_2_Price','Asset_1_Swapped','Asset_2_Swapped','Brokerage_Paid','Net_Profit_INR','Accumulated_Cash','Real_Asset_1_Balance','Real_Asset_2_Balance'];
+  const csvLines = [headers.join(',')].concat(rows.map((row) => [row.date,row.action,row.asset1Price,row.asset2Price,row.asset1Swapped,row.asset2Swapped,row.brokeragePaid,row.netProfitInr,row.accumulatedCash,row.realAsset1Balance,row.realAsset2Balance].join(',')));
   const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');

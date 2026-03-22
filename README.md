@@ -17,7 +17,6 @@ Firebase App Hosting supports Next.js, Angular, and generic **Node.js apps**. Th
 - Configure virtual capital, real capital, and brokerage fee assumptions
 - Run the ALM simulation entirely in the browser
 - Restrict swaps to whole stock units only
-- Track the maximum pool-to-market divergence percentage
 - Review summary KPIs and a detailed swap-history table
 - Download the full swap ledger as CSV
 - Deploy through GitHub with Firebase App Hosting
@@ -59,3 +58,4 @@ Each uploaded file must include:
 - `date`: a timestamp parseable by the browser `Date` API
 - `close`: numeric close price
 - swap execution uses whole stock units only (no fractional shares)
+- real pool balances are updated cumulatively from the initial stock quantities after each executed swap
