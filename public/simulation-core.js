@@ -42,6 +42,10 @@ export function normalizeRows(rows) {
     .sort((a, b) => a.date - b.date);
 }
 
+function floorUnits(value) {
+  return Math.max(0, Math.floor(value));
+}
+
 export function runAlmSimulation(df1, df2, virtualCapital, realCapital, fee) {
   const asset1 = normalizeRows(df1);
   const asset2 = normalizeRows(df2);
@@ -70,19 +74,25 @@ export function runAlmSimulation(df1, df2, virtualCapital, realCapital, fee) {
   const p2Init = merged[0].close2;
   let x = virtualCapital / p1Init;
   let y = virtualCapital / p2Init;
-  const k = x * y;
-  const rxInit = realCapital / p1Init;
-  const ryInit = realCapital / p2Init;
+
+  const rxInit = floorUnits(realCapital / p1Init);
+  const ryInit = floorUnits(realCapital / p2Init);
   let rx = rxInit;
   let ry = ryInit;
   let poolCash = 0;
+  let maxDivergencePct = 0;
   const swapRecords = [];
 
   for (let index = 1; index < merged.length; index += 1) {
     const row = merged[index];
-    const ratio = row.close1 / row.close2;
-    const xPrime = Math.sqrt(k / ratio);
-    const yPrime = Math.sqrt(k * ratio);
+    const marketRatio = row.close1 / row.close2;
+    const poolRatioBeforeTrade = y > 0 ? x / y : 0;
+    const divergencePct = marketRatio > 0 ? Math.abs(poolRatioBeforeTrade / marketRatio - 1) * 100 : 0;
+    maxDivergencePct = Math.max(maxDivergencePct, divergencePct);
+
+    const invariant = x * y;
+    const xPrime = Math.sqrt(invariant / marketRatio);
+    const yPrime = Math.sqrt(invariant * marketRatio);
     let dx = x - xPrime;
     let dy = yPrime - y;
     let tradeExecuted = false;
@@ -91,36 +101,48 @@ export function runAlmSimulation(df1, df2, virtualCapital, realCapital, fee) {
     let action = '';
 
     if (dx > 0 && dy > 0) {
-      const revenue = dx * row.close1;
-      const cost = dy * row.close2;
-      const grossProfit = revenue - cost;
-      tradeFee = revenue * fee;
-      netProfit = grossProfit - tradeFee;
-      if (netProfit > 0 && rx >= dx) {
-        rx -= dx;
-        ry += dy;
-        action = 'Sell Asset 1 / Buy Asset 2';
-        tradeExecuted = true;
+      const unitDx = Math.min(floorUnits(dx), rx);
+      const unitDy = floorUnits(dy);
+      if (unitDx >= 1 && unitDy >= 1) {
+        const revenue = unitDx * row.close1;
+        const cost = unitDy * row.close2;
+        const grossProfit = revenue - cost;
+        tradeFee = revenue * fee;
+        netProfit = grossProfit - tradeFee;
+        if (netProfit > 0) {
+          dx = unitDx;
+          dy = unitDy;
+          rx -= dx;
+          ry += dy;
+          x -= dx;
+          y += dy;
+          action = 'Sell Asset 1 / Buy Asset 2';
+          tradeExecuted = true;
+        }
       }
     } else if (dx < 0 && dy < 0) {
-      dx = Math.abs(dx);
-      dy = Math.abs(dy);
-      const revenue = dy * row.close2;
-      const cost = dx * row.close1;
-      const grossProfit = revenue - cost;
-      tradeFee = revenue * fee;
-      netProfit = grossProfit - tradeFee;
-      if (netProfit > 0 && ry >= dy) {
-        rx += dx;
-        ry -= dy;
-        action = 'Buy Asset 1 / Sell Asset 2';
-        tradeExecuted = true;
+      const unitDx = floorUnits(Math.abs(dx));
+      const unitDy = Math.min(floorUnits(Math.abs(dy)), ry);
+      if (unitDx >= 1 && unitDy >= 1) {
+        const revenue = unitDy * row.close2;
+        const cost = unitDx * row.close1;
+        const grossProfit = revenue - cost;
+        tradeFee = revenue * fee;
+        netProfit = grossProfit - tradeFee;
+        if (netProfit > 0) {
+          dx = unitDx;
+          dy = unitDy;
+          rx += dx;
+          ry -= dy;
+          x += dx;
+          y -= dy;
+          action = 'Buy Asset 1 / Sell Asset 2';
+          tradeExecuted = true;
+        }
       }
     }
 
     if (tradeExecuted) {
-      x = xPrime;
-      y = yPrime;
       poolCash += netProfit;
       swapRecords.push({
         date: row.date.toISOString(),
@@ -134,6 +156,7 @@ export function runAlmSimulation(df1, df2, virtualCapital, realCapital, fee) {
         accumulatedCash: poolCash,
         realAsset1Balance: rx,
         realAsset2Balance: ry,
+        divergencePctBeforeTrade: divergencePct,
       });
     }
   }
@@ -145,8 +168,24 @@ export function runAlmSimulation(df1, df2, virtualCapital, realCapital, fee) {
   const impermanentLossInr = poolAssetValue - holdValue;
   const impermanentLossPct = holdValue > 0 ? (poolAssetValue / holdValue - 1) * 100 : 0;
   const totalFinalValue = poolAssetValue + poolCash;
-  const initialCapital = realCapital * 2;
-  const totalRoiPct = ((totalFinalValue / initialCapital) - 1) * 100;
+  const initialCapital = rxInit * p1Init + ryInit * p2Init;
+  const totalRoiPct = initialCapital > 0 ? ((totalFinalValue / initialCapital) - 1) * 100 : 0;
 
-  return { swaps: swapRecords, results: { totalSwaps: swapRecords.length, poolCash, holdValue, poolAssetValue, totalFinalValue, impermanentLossInr, impermanentLossPct, totalRoiPct, initialCapital } };
+  return {
+    swaps: swapRecords,
+    results: {
+      totalSwaps: swapRecords.length,
+      poolCash,
+      holdValue,
+      poolAssetValue,
+      totalFinalValue,
+      impermanentLossInr,
+      impermanentLossPct,
+      totalRoiPct,
+      initialCapital,
+      maxDivergencePct,
+      initialAsset1Units: rxInit,
+      initialAsset2Units: ryInit,
+    }
+  };
 }

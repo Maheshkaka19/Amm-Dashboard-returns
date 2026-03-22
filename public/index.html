@@ -14,7 +14,7 @@
           <h1>Automated Liquidity Management Dashboard</h1>
           <p class="lede">
             Upload two 1-minute timeframe CSV files to simulate a concentrated liquidity AMM pool that arbitrages
-            against external market pricing.
+            against external market pricing using whole-share stock swaps only.
           </p>
         </div>
 
@@ -61,6 +61,7 @@
           <ul>
             <li><code>date</code> — timestamp column</li>
             <li><code>close</code> — close price column</li>
+            <li>Swaps are restricted to whole stock units only</li>
           </ul>
         </section>
       </aside>
@@ -82,7 +83,7 @@
           <div id="metricsGrid" class="metric-grid">
             <div class="empty-state">
               <h3>No simulation results yet</h3>
-              <p>Upload two CSV files and run the model to see ROI, swap history, and impermanent loss analysis.</p>
+              <p>Upload two CSV files and run the model to see ROI, swap history, impermanent loss, and peak divergence analysis.</p>
             </div>
           </div>
         </div>
