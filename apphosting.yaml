@@ -1,0 +1,12 @@
+runConfig:
+  cpu: 1
+  memoryMiB: 512
+  minInstances: 0
+
+scripts:
+  buildCommand: npm run build
+  runCommand: node server.mjs
+
+outputFiles:
+  serverApp:
+    include: [.] 
