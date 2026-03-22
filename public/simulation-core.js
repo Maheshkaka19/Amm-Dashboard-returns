@@ -68,13 +68,16 @@ export function runAlmSimulation(df1, df2, virtualCapital, realCapital, fee) {
     }
   }
 
-  if (!merged.length) return { error: 'No overlapping dates were found in the uploaded datasets.' };
+  if (!merged.length) return { error: 'No overlapping dates were found in the datasets.' };
 
   const p1Init = merged[0].close1;
   const p2Init = merged[0].close2;
+  
+  // Virtual Pool Initialization
   let x = virtualCapital / p1Init;
   let y = virtualCapital / p2Init;
 
+  // Real Pool Initialization
   const rxInit = floorUnits(realCapital / p1Init);
   const ryInit = floorUnits(realCapital / p2Init);
   let rx = rxInit;
@@ -86,6 +89,8 @@ export function runAlmSimulation(df1, df2, virtualCapital, realCapital, fee) {
     const row = merged[index];
     const marketRatio = row.close1 / row.close2;
     const invariant = x * y;
+    
+    // Target Virtual State
     const xPrime = Math.sqrt(invariant / marketRatio);
     const yPrime = Math.sqrt(invariant * marketRatio);
     const rawDx = x - xPrime;
@@ -99,8 +104,13 @@ export function runAlmSimulation(df1, df2, virtualCapital, realCapital, fee) {
     let action = '';
 
     if (rawDx > 0 && rawDy > 0) {
-      dx = Math.min(floorUnits(rawDx), rx);
-      dy = floorUnits(rawDy);
+      // Intent: Sell Asset 1, Buy Asset 2
+      // Determine what fraction of the ideal trade we can actually afford with real inventory
+      const executionRatio = Math.min(1.0, rx / rawDx);
+      
+      // Apply the same ratio to both sides to maintain the mathematical AMM curve
+      dx = floorUnits(rawDx * executionRatio);
+      dy = floorUnits(rawDy * executionRatio);
 
       if (dx >= 1 && dy >= 1) {
         const revenue = dx * row.close1;
@@ -112,15 +122,23 @@ export function runAlmSimulation(df1, df2, virtualCapital, realCapital, fee) {
         if (netProfit > 0) {
           rx -= dx;
           ry += dy;
-          x = xPrime;
-          y = yPrime;
+          // Update virtual curves by exact amount traded, locking them to real operations
+          x -= dx; 
+          y += dy;
           action = 'Sell Asset 1 / Buy Asset 2';
           tradeExecuted = true;
         }
       }
     } else if (rawDx < 0 && rawDy < 0) {
-      dx = floorUnits(Math.abs(rawDx));
-      dy = Math.min(floorUnits(Math.abs(rawDy)), ry);
+      // Intent: Buy Asset 1, Sell Asset 2
+      const absRawDx = Math.abs(rawDx);
+      const absRawDy = Math.abs(rawDy);
+      
+      // We are selling Asset 2, so cap by available ry
+      const executionRatio = Math.min(1.0, ry / absRawDy);
+      
+      dx = floorUnits(absRawDx * executionRatio);
+      dy = floorUnits(absRawDy * executionRatio);
 
       if (dx >= 1 && dy >= 1) {
         const revenue = dy * row.close2;
@@ -132,8 +150,9 @@ export function runAlmSimulation(df1, df2, virtualCapital, realCapital, fee) {
         if (netProfit > 0) {
           rx += dx;
           ry -= dy;
-          x = xPrime;
-          y = yPrime;
+          // Update virtual curves by exact amount traded
+          x += dx; 
+          y -= dy;
           action = 'Buy Asset 1 / Sell Asset 2';
           tradeExecuted = true;
         }
@@ -160,12 +179,12 @@ export function runAlmSimulation(df1, df2, virtualCapital, realCapital, fee) {
 
   const finalP1 = merged[merged.length - 1].close1;
   const finalP2 = merged[merged.length - 1].close2;
-  const holdValue = rxInit * finalP1 + ryInit * finalP2;
-  const poolAssetValue = rx * finalP1 + ry * finalP2;
+  const holdValue = (rxInit * finalP1) + (ryInit * finalP2);
+  const poolAssetValue = (rx * finalP1) + (ry * finalP2);
   const impermanentLossInr = poolAssetValue - holdValue;
   const impermanentLossPct = holdValue > 0 ? (poolAssetValue / holdValue - 1) * 100 : 0;
   const totalFinalValue = poolAssetValue + poolCash;
-  const initialCapital = rxInit * p1Init + ryInit * p2Init;
+  const initialCapital = (rxInit * p1Init) + (ryInit * p2Init);
   const totalRoiPct = initialCapital > 0 ? ((totalFinalValue / initialCapital) - 1) * 100 : 0;
 
   return {
