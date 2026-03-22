@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AMM Pool ALM Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <aside class="sidebar">
+        <div>
+          <p class="eyebrow">AMM Simulation</p>
+          <h1>Automated Liquidity Management Dashboard</h1>
+          <p class="lede">
+            Upload two 1-minute timeframe CSV files to simulate a concentrated liquidity AMM pool that arbitrages
+            against external market pricing using whole-share stock swaps only.
+          </p>
+        </div>
+
+        <section class="panel">
+          <h2>Pool Parameters</h2>
+          <label>
+            Virtual Capital per Asset (₹)
+            <input id="virtualCapital" type="number" min="0" step="1000000" value="10000000" />
+          </label>
+          <label>
+            Real Capital per Asset (₹)
+            <input id="realCapital" type="number" min="0" step="100000" value="1000000" />
+          </label>
+          <label>
+            Brokerage Fee (%)
+            <input id="brokerageFee" type="number" min="0" step="0.05" value="0.3" />
+          </label>
+        </section>
+
+        <section class="panel">
+          <h2>Upload Datasets</h2>
+          <label class="upload-zone">
+            <span id="asset1FileName">Upload Asset 1 CSV (e.g., Reliance)</span>
+            <input id="asset1File" type="file" accept=".csv,text/csv" />
+          </label>
+          <label>
+            Asset 1 Label
+            <input id="asset1Label" value="Asset 1" />
+          </label>
+          <label class="upload-zone">
+            <span id="asset2FileName">Upload Asset 2 CSV (e.g., Kotak)</span>
+            <input id="asset2File" type="file" accept=".csv,text/csv" />
+          </label>
+          <label>
+            Asset 2 Label
+            <input id="asset2Label" value="Asset 2" />
+          </label>
+          <button id="runSimulation" class="primary-button">Run Simulation</button>
+        </section>
+
+        <section class="panel small">
+          <h2>CSV Format</h2>
+          <p>Each file should contain at least:</p>
+          <ul>
+            <li><code>date</code> — timestamp column</li>
+            <li><code>close</code> — close price column</li>
+            <li>Swaps are restricted to whole stock units only</li>
+          </ul>
+        </section>
+      </aside>
+
+      <section class="content">
+        <div id="statusBanner" class="status-banner info">
+          <strong>INFO:</strong>
+          <span>Upload both CSV datasets to run the simulation.</span>
+        </div>
+
+        <div class="panel chart-panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Pool Overview</p>
+              <h2 id="pairHeading">Asset 1 vs Asset 2</h2>
+            </div>
+            <button id="downloadCsv" class="secondary-button hidden">Download Full Swap History</button>
+          </div>
+          <div id="metricsGrid" class="metric-grid">
+            <div class="empty-state">
+              <h3>No simulation results yet</h3>
+              <p>Upload two CSV files and run the model to see ROI, swap history, impermanent loss, and peak divergence analysis.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Arbitrage Swap History</p>
+              <h2>Executed internal rebalances</h2>
+            </div>
+            <span id="swapCount" class="pill hidden"></span>
+          </div>
+          <div id="swapTableContainer">
+            <div class="empty-state compact">
+              <h3>No profitable arbitrages found</h3>
+              <p>Adjust fee assumptions or upload a different pair of datasets to produce profitable rebalances.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
