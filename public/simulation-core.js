@@ -1,3 +1,51 @@
+export function splitCsvLine(line) {
+  const cells = [];
+  let current = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    if (char === '"') {
+      if (quoted && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (char === ',' && !quoted) {
+      cells.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  cells.push(current);
+  return cells;
+}
+
+export function parseCsv(text) {
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return [];
+  const headers = splitCsvLine(lines[0]).map((value) => value.trim().toLowerCase());
+  return lines.slice(1).map((line) => {
+    const cells = splitCsvLine(line);
+    return headers.reduce((row, header, index) => {
+      row[header] = (cells[index] || '').trim();
+      return row;
+    }, {});
+  });
+}
+
+export function normalizeRows(rows) {
+  return rows
+    .map((row) => ({ date: new Date(row.date), close: Number(row.close) }))
+    .filter((row) => !Number.isNaN(row.date.getTime()) && Number.isFinite(row.close))
+    .sort((a, b) => a.date - b.date);
+}
+
+function floorUnits(value) {
+  return Math.max(0, Math.floor(value));
+}
+
 export function runAlmSimulation(df1, df2, virtualCapital, realCapital, fee) {
   const asset1 = normalizeRows(df1);
   const asset2 = normalizeRows(df2);
