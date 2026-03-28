@@ -1,149 +1,143 @@
-// --- UTILITY FUNCTIONS ---
-export function splitCsvLine(line) {
-  const cells = [];
-  let current = '';
-  let quoted = false;
-  for (let i = 0; i < line.length; i += 1) {
-    const char = line[i];
-    if (char === '"') {
-      if (quoted && line[i + 1] === '"') {
-        current += '"'; i += 1;
-      } else { quoted = !quoted; }
-    } else if (char === ',' && !quoted) {
-      cells.push(current); current = '';
-    } else { current += char; }
-  }
-  cells.push(current);
-  return cells;
-}
+/** * ESSENCE AMM ENGINE v3.2 - PRODUCTION GRADE
+ * Focus: Uniswap v3 Math, Dynamic Concentration, & Friction
+ */
+
+// --- 1. ROBUST DATA SANITIZATION ---
+const cleanNum = (val) => {
+  if (val === null || val === undefined) return 0;
+  // Removes commas, currency symbols, and spaces, then forces to Number
+  const n = parseFloat(String(val).replace(/[^0-9.-]+/g, ""));
+  return isNaN(n) ? 0 : n;
+};
 
 export function parseCsv(text) {
   const lines = text.trim().split(/\r?\n/).filter(Boolean);
   if (lines.length < 2) return [];
-  const headers = splitCsvLine(lines[0]).map((v) => v.trim().toLowerCase());
-  return lines.slice(1).map((line) => {
-    const cells = splitCsvLine(line);
-    return headers.reduce((row, header, index) => {
-      row[header] = (cells[index] || '').trim();
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+  return lines.slice(1).map(line => {
+    const cells = line.split(',');
+    return headers.reduce((row, header, i) => {
+      row[header] = cells[i] ? cells[i].trim() : "";
       return row;
     }, {});
   });
 }
 
-export function normalizeRows(rows) {
-  return rows.map((row) => ({
-    date: new Date(row.date),
-    close: Number(String(row.close).replace(/,/g, '')),
-    volume: Number(String(row.volume).replace(/,/g, '')),
-  })).filter((row) => !Number.isNaN(row.date.getTime()) && row.close > 0)
-     .sort((a, b) => a.date - b.date);
-}
+// --- 2. QUANT MATH HELPERS ---
+const safeSqrt = (n) => Math.sqrt(Math.max(0, n));
 
-// --- QUANT MATH ---
-const safeSqrt = (val) => Math.sqrt(Math.max(0, val));
-
-function calculateLiquidity(x, y, P, Pa, Pb) {
-  if (P <= Pa) return x * (safeSqrt(P) * safeSqrt(Pb)) / (safeSqrt(Pb) - safeSqrt(P));
-  if (P >= Pb) return y / (safeSqrt(P) - safeSqrt(Pa));
-  
-  const Lx = x * (safeSqrt(P) * safeSqrt(Pb)) / (safeSqrt(Pb) - safeSqrt(P));
-  const Ly = y / (safeSqrt(P) - safeSqrt(Pa));
+// Calculates Liquidity (L) for a given capital split
+function getLiquidity(x, y, P, Pa, Pb) {
+  const sp = safeSqrt(P), sa = safeSqrt(Pa), sb = safeSqrt(Pb);
+  if (P <= Pa) return x * (sa * sb) / (sb - sa);
+  if (P >= Pb) return y / (sb - sa);
+  const Lx = x * (sp * sb) / (sb - sp);
+  const Ly = y / (sp - sa);
   return Math.min(Lx, Ly);
 }
 
-// --- SIMULATION ENGINE ---
+// --- 3. THE CORE SIMULATOR ---
 export function runAlmSimulation(df1, df2, realCapital, config = {}) {
-  const asset1 = normalizeRows(df1);
-  const asset2 = normalizeRows(df2);
-  if (!asset1.length || !asset2.length) return { error: 'Invalid CSV Data.' };
+  // A. Data Normalization & Alignment
+  const a1 = df1.map(r => ({ d: new Date(r.date).getTime(), c: cleanNum(r.close), v: cleanNum(r.volume) })).filter(r => r.c > 0);
+  const a2 = df2.map(r => ({ d: new Date(r.date).getTime(), c: cleanNum(r.close), v: cleanNum(r.volume) })).filter(r => r.c > 0);
 
   const merged = [];
   let i = 0, j = 0;
-  while (i < asset1.length && j < asset2.length) {
-    if (asset1[i].date.getTime() === asset2[j].date.getTime()) {
-      merged.push({ date: asset1[i].date, c1: asset1[i].close, c2: asset2[j].close, v: asset1[i].volume + asset2[j].volume });
+  while (i < a1.length && j < a2.length) {
+    if (a1[i].d === a2[j].d) {
+      merged.push({ date: new Date(a1[i].d), c1: a1[i].c, c2: a2[j].c, vol: a1[i].v + a2[j].v });
       i++; j++;
-    } else if (asset1[i].date < asset2[j].date) { i++; } else { j++; }
+    } else if (a1[i].d < a2[j].d) { i++; } else { j++; }
   }
 
-  // Settings
-  const width = (Number(config.midWidth ?? 2.0) / 100);
-  const feeRate = 0.003; // 0.3% flat
-  const recenterThreshold = 0.80; // Recenter when 80% through range
+  if (merged.length < 5) return { error: "Insufficient overlapping data found in CSVs." };
 
-  // Init State (50:50 Split)
-  let rx = (realCapital * 0.5) / merged[0].c1;
-  let ry = (realCapital * 0.5) / merged[0].c2;
+  // B. Config & Parameters
+  const capital = cleanNum(realCapital) || 100000;
+  const rangeWidth = (cleanNum(config.midWidth) || 2.0) / 100;
+  const feeRate = 0.003; // 0.3% flat STT + Brokerage
+  const recenterThreshold = 0.75; // Recenter when 75% through the range
+
+  // C. Initial State (50:50 Value Split)
+  let rx = (capital * 0.5) / merged[0].c1;
+  let ry = (capital * 0.5) / merged[0].c2;
   const rxInit = rx, ryInit = ry;
 
   let poolCash = 0;
   let recenterCount = 0;
   const swapRecords = [];
 
-  // Range setup (Geometric Mean Anchoring)
+  // Initial Range Setup
   let Pc = merged[0].c1 / merged[0].c2;
-  let Pa = Pc * (1 - width);
-  let Pb = Pc / (1 - width); // Ensures Pc = sqrt(Pa * Pb)
-  let L = calculateLiquidity(rx, ry, Pc, Pa, Pb);
+  let Pa = Pc * (1 - rangeWidth);
+  let Pb = Pc / (1 - rangeWidth);
+  let L = getLiquidity(rx, ry, Pc, Pa, Pb);
 
+  // D. Hourly Simulation Loop
   for (let idx = 1; idx < merged.length; idx++) {
     const row = merged[idx];
     const P = row.c1 / row.c2;
 
-    // Check for Range Exit (Recenter)
+    // 1. Check for Range Exit / Recenter Trigger
     const drift = P > Pc ? (P - Pc) / (Pb - Pc) : (Pc - P) / (Pc - Pa);
-    
+
     if (drift >= recenterThreshold || P <= Pa || P >= Pb) {
       const currentVal = (rx * row.c1) + (ry * row.c2);
       const rebalCost = currentVal * feeRate;
       
-      poolCash -= rebalCost;
+      poolCash -= rebalCost; // Cost of the swap to re-center
       rx = (currentVal * 0.5) / row.c1;
       ry = (currentVal * 0.5) / row.c2;
       
       Pc = P;
-      Pa = Pc * (1 - width);
-      Pb = Pc / (1 - width);
-      L = calculateLiquidity(rx, ry, Pc, Pa, Pb);
+      Pa = Pc * (1 - rangeWidth);
+      Pb = Pc / (1 - rangeWidth);
+      L = getLiquidity(rx, ry, Pc, Pa, Pb);
+      
       recenterCount++;
       continue;
     }
 
-    // Standard V3 Harvesting
-    const targetRx = L * (safeSqrt(Pb) - safeSqrt(P)) / (safeSqrt(P) * safeSqrt(Pb));
-    const targetRy = L * (safeSqrt(P) - safeSqrt(Pa));
+    // 2. Harvesting (Uniswap v3 Virtual Inventory Check)
+    const sp = safeSqrt(P), sa = safeSqrt(Pa), sb = safeSqrt(Pb);
+    const targetRx = L * (sb - sp) / (sp * sb);
+    const targetRy = L * (sp - sa);
 
     const dx = rx - targetRx;
     const dy = targetRy - ry;
 
-    if (Math.abs(dx) > 1 && Math.abs(dy) > 1) {
+    // Execute if trade is large enough to cover the 1-unit minimum
+    if (Math.abs(dx) > 0.1 && Math.abs(dy) > 0.1) {
       const revenue = dx > 0 ? dx * row.c1 : dy * row.c2;
       const cost = dx > 0 ? dy * row.c2 : Math.abs(dx) * row.c1;
-      const tradeFee = revenue * feeRate;
-      const profit = revenue - cost - tradeFee;
+      const netProfit = (revenue - cost) - (revenue * feeRate);
 
-      if (profit > 0) {
-        rx = targetRx; ry = targetRy; poolCash += profit;
-        swapRecords.push({ date: row.date.toISOString(), profit, cash: poolCash });
+      if (netProfit > 0) {
+        rx = targetRx;
+        ry = targetRy;
+        poolCash += netProfit;
+        swapRecords.push({ t: row.date.toLocaleTimeString(), p: netProfit });
       }
     }
   }
 
+  // E. Final Results
   const last = merged[merged.length - 1];
   const finalAssetVal = (rx * last.c1) + (ry * last.c2);
   const holdVal = (rxInit * last.c1) + (ryInit * last.c2);
-  
+  const totalFinal = finalAssetVal + poolCash;
+
   return {
     results: {
       totalSwaps: swapRecords.length,
-      recenterCount,
-      initialCapital: realCapital,
-      finalValue: finalAssetVal + poolCash,
-      holdValue: holdVal,
-      netAlpha: (finalAssetVal + poolCash) - holdVal,
-      ilInr: finalAssetVal - holdVal,
-      roi: (((finalAssetVal + poolCash) / realCapital) - 1) * 100
+      recenters: recenterCount,
+      initialCapital: capital,
+      finalValue: totalFinal.toFixed(2),
+      holdValue: holdVal.toFixed(2),
+      netAlpha: (totalFinal - holdVal).toFixed(2),
+      roi: (((totalFinal / capital) - 1) * 100).toFixed(2)
     },
-    swaps: swapRecords
+    swaps: swapRecords.slice(-50) // Last 50 for the table
   };
 }
