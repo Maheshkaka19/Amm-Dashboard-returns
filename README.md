@@ -1,6 +1,6 @@
 # AMM Pool ALM Dashboard
 
-A lightweight ALM dashboard for uploading two CSV files, running an Automated Liquidity Management (ALM) simulation in the browser, and reviewing swap profitability, impermanent loss, and final ROI.
+A lightweight hourly event-driven ALM dashboard for uploading two CSV files, running an Arrakis-style concentrated-liquidity simulation in the browser, and reviewing swap profitability, impermanent loss, and final ROI.
 
 ## Why this version deploys on Firebase App Hosting
 
@@ -13,9 +13,9 @@ Firebase App Hosting supports Next.js, Angular, and generic **Node.js apps**. Th
 
 ## Features
 
-- Upload two CSV datasets with `date` and `close` columns
+- Upload two CSV datasets with `date`, `close`, and `volume` columns
 - Configure virtual capital, real capital, and brokerage fee assumptions
-- Run the ALM simulation entirely in the browser
+- Run an hourly event-driven ALM engine with configurable LOW/MID/HIGH risk widths and sigma threshold
 - Restrict swaps to whole stock units only
 - Review summary KPIs and a detailed swap-history table
 - Download the full swap ledger as CSV
@@ -59,3 +59,14 @@ Each uploaded file must include:
 - `close`: numeric close price
 - swap execution uses whole stock units only (no fractional shares)
 - real pool balances are updated cumulatively from the initial stock quantities after each executed swap
+
+
+## Engine API
+
+`runAlmSimulation(df1, df2, realCapital, config)`
+
+Config fields:
+- `lowWidth`, `midWidth`, `highWidth` (percent widths)
+- `sigmaThreshold`
+- `lookbackHours`
+- `pauseHighVol`

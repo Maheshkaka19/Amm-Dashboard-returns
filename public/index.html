@@ -10,27 +10,42 @@
     <main class="page-shell">
       <aside class="sidebar">
         <div>
-          <p class="eyebrow">AMM Simulation</p>
-          <h1>Automated Liquidity Management Dashboard</h1>
+          <p class="eyebrow">Hourly Event-Driven ALM</p>
+          <h1>Arrakis-Style Stock-to-Stock ALM Dashboard</h1>
           <p class="lede">
-            Upload two 1-minute timeframe CSV files to simulate a concentrated liquidity AMM pool that arbitrages
-            against external market pricing using whole-share stock swaps only. Pool inventory is updated cumulatively from the initial stock units.
+            Upload two 1-minute CSV files with <code>date</code>, <code>close</code>, and <code>volume</code>. Data is grouped
+            into hourly buckets and traded with Uniswap v3-style concentrated liquidity math.
           </p>
         </div>
 
         <section class="panel">
-          <h2>Pool Parameters</h2>
+          <h2>Pool & Risk Parameters</h2>
           <label>
-            Virtual Capital per Asset (₹)
-            <input id="virtualCapital" type="number" min="0" step="1000000" value="10000000" />
+            Total Real Capital (₹)
+            <input id="realCapital" type="number" min="0" step="100000" value="2000000" />
           </label>
           <label>
-            Real Capital per Asset (₹)
-            <input id="realCapital" type="number" min="0" step="100000" value="1000000" />
+            LOW Width (%)
+            <input id="lowWidth" type="number" min="0.1" step="0.05" value="0.75" />
           </label>
           <label>
-            Brokerage Fee (%)
-            <input id="brokerageFee" type="number" min="0" step="0.05" value="0.3" />
+            MID Width (%)
+            <input id="midWidth" type="number" min="0.1" step="0.1" value="2" />
+          </label>
+          <label>
+            HIGH Width (%)
+            <input id="highWidth" type="number" min="0.1" step="0.25" value="5" />
+          </label>
+          <label>
+            Sigma Threshold (σ)
+            <input id="sigmaThreshold" type="number" min="0.1" step="0.1" value="1" />
+          </label>
+          <label>
+            Lookback Hours
+            <input id="lookbackHours" type="number" min="5" step="1" value="24" />
+          </label>
+          <label>
+            <input id="pauseHighVol" type="checkbox" /> Pause swaps in HIGH mode
           </label>
         </section>
 
@@ -57,11 +72,12 @@
 
         <section class="panel small">
           <h2>CSV Format</h2>
-          <p>Each file should contain at least:</p>
           <ul>
             <li><code>date</code> — timestamp column</li>
             <li><code>close</code> — close price column</li>
-            <li>Swaps are restricted to whole stock units only</li>
+            <li><code>volume</code> — trade volume column (required)</li>
+            <li>Swaps are whole-unit stock quantities only</li>
+            <li>Flat 0.3% friction on swap revenue</li>
           </ul>
         </section>
       </aside>
@@ -83,7 +99,7 @@
           <div id="metricsGrid" class="metric-grid">
             <div class="empty-state">
               <h3>No simulation results yet</h3>
-              <p>Upload two CSV files and run the model to see ROI, swap history, and impermanent loss analysis.</p>
+              <p>Upload two CSV files and run the model to see ROI, risk modes, and swap history.</p>
             </div>
           </div>
         </div>
@@ -91,15 +107,15 @@
         <div class="panel">
           <div class="panel-header">
             <div>
-              <p class="eyebrow">Arbitrage Swap History</p>
-              <h2>Executed internal rebalances</h2>
+              <p class="eyebrow">Hourly ALM Swap History</p>
+              <h2>Executed re-center swaps</h2>
             </div>
             <span id="swapCount" class="pill hidden"></span>
           </div>
           <div id="swapTableContainer">
             <div class="empty-state compact">
-              <h3>No profitable arbitrages found</h3>
-              <p>Adjust fee assumptions or upload a different pair of datasets to produce profitable rebalances.</p>
+              <h3>No profitable swaps found</h3>
+              <p>Adjust risk-mode settings and run again.</p>
             </div>
           </div>
         </div>
