@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AMM Pool ALM Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <aside class="sidebar">
+        <div>
+          <p class="eyebrow">Hourly Event-Driven ALM</p>
+          <h1>Arrakis-Style Stock-to-Stock ALM Dashboard</h1>
+          <p class="lede">
+            Upload two 1-minute CSV files with <code>date</code>, <code>close</code>, and <code>volume</code>. Data is grouped
+            into hourly buckets and traded with Uniswap v3-style concentrated liquidity math.
+          </p>
+        </div>
+
+        <section class="panel">
+          <h2>Pool & Risk Parameters</h2>
+          <label>
+            Total Real Capital (₹)
+            <input id="realCapital" type="number" min="0" step="100000" value="2000000" />
+          </label>
+          <label>
+            LOW Width (%)
+            <input id="lowWidth" type="number" min="0.1" step="0.05" value="0.75" />
+          </label>
+          <label>
+            MID Width (%)
+            <input id="midWidth" type="number" min="0.1" step="0.1" value="2" />
+          </label>
+          <label>
+            HIGH Width (%)
+            <input id="highWidth" type="number" min="0.1" step="0.25" value="5" />
+          </label>
+          <label>
+            Sigma Threshold (σ)
+            <input id="sigmaThreshold" type="number" min="0.1" step="0.1" value="1" />
+          </label>
+          <label>
+            Lookback Hours
+            <input id="lookbackHours" type="number" min="5" step="1" value="24" />
+          </label>
+          <label>
+            <input id="pauseHighVol" type="checkbox" /> Pause swaps in HIGH mode
+          </label>
+        </section>
+
+        <section class="panel">
+          <h2>Upload Datasets</h2>
+          <label class="upload-zone">
+            <span id="asset1FileName">Upload Asset 1 CSV (e.g., Reliance)</span>
+            <input id="asset1File" type="file" accept=".csv,text/csv" />
+          </label>
+          <label>
+            Asset 1 Label
+            <input id="asset1Label" value="Asset 1" />
+          </label>
+          <label class="upload-zone">
+            <span id="asset2FileName">Upload Asset 2 CSV (e.g., Kotak)</span>
+            <input id="asset2File" type="file" accept=".csv,text/csv" />
+          </label>
+          <label>
+            Asset 2 Label
+            <input id="asset2Label" value="Asset 2" />
+          </label>
+          <button id="runSimulation" class="primary-button">Run Simulation</button>
+        </section>
+
+        <section class="panel small">
+          <h2>CSV Format</h2>
+          <ul>
+            <li><code>date</code> — timestamp column</li>
+            <li><code>close</code> — close price column</li>
+            <li><code>volume</code> — trade volume column (required)</li>
+            <li>Swaps are whole-unit stock quantities only</li>
+            <li>Flat 0.3% friction on swap revenue</li>
+          </ul>
+        </section>
+      </aside>
+
+      <section class="content">
+        <div id="statusBanner" class="status-banner info">
+          <strong>INFO:</strong>
+          <span>Upload both CSV datasets to run the simulation.</span>
+        </div>
+
+        <div class="panel chart-panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Pool Overview</p>
+              <h2 id="pairHeading">Asset 1 vs Asset 2</h2>
+            </div>
+            <button id="downloadCsv" class="secondary-button hidden">Download Full Swap History</button>
+          </div>
+          <div id="metricsGrid" class="metric-grid">
+            <div class="empty-state">
+              <h3>No simulation results yet</h3>
+              <p>Upload two CSV files and run the model to see ROI, risk modes, and swap history.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Hourly ALM Swap History</p>
+              <h2>Executed re-center swaps</h2>
+            </div>
+            <span id="swapCount" class="pill hidden"></span>
+          </div>
+          <div id="swapTableContainer">
+            <div class="empty-state compact">
+              <h3>No profitable swaps found</h3>
+              <p>Adjust risk-mode settings and run again.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
