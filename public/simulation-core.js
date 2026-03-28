@@ -46,10 +46,6 @@ export function normalizeRows(rows) {
     .sort((a, b) => a.date - b.date);
 }
 
-function floorUnits(value) {
-  return Math.max(0, Math.floor(value));
-}
-
 function mean(values) {
   if (!values.length) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -152,178 +148,185 @@ function getMode(hourlyVolume, lookbackVolumes, sigmaThreshold) {
   return 'MID';
 }
 
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-
 function widthByMode(mode, lowWidth, midWidth, highWidth) {
   if (mode === 'LOW') return lowWidth;
   if (mode === 'HIGH') return highWidth;
   return midWidth;
 }
 
+// True Uniswap V3 Math Helpers
+function calculateLiquidity(x, y, P, Pa, Pb) {
+  const Lx = x / ((1 / Math.sqrt(P)) - (1 / Math.sqrt(Pb)));
+  const Ly = y / (Math.sqrt(P) - Math.sqrt(Pa));
+  return Math.min(Lx, Ly); // Deploy max safe balanced liquidity
+}
+
+function getTargetX(L, P, Pa, Pb) {
+  if (P <= Pa) return L * ((1 / Math.sqrt(Pa)) - (1 / Math.sqrt(Pb)));
+  if (P >= Pb) return 0;
+  return L * ((1 / Math.sqrt(P)) - (1 / Math.sqrt(Pb)));
+}
+
+function getTargetY(L, P, Pa, Pb) {
+  if (P <= Pa) return 0;
+  if (P >= Pb) return L * (Math.sqrt(Pb) - Math.sqrt(Pa));
+  return L * (Math.sqrt(P) - Math.sqrt(Pa));
+}
+
 export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   const asset1 = normalizeRows(df1);
   const asset2 = normalizeRows(df2);
-  if (!asset1.length || !asset2.length) {
-    return { error: 'Both CSV files must include valid date, close, and volume columns.' };
-  }
+  if (!asset1.length || !asset2.length) return { error: 'Invalid CSV data.' };
 
   const merged = mergeRows(asset1, asset2);
-  if (!merged.length) {
-    return { error: 'No overlapping dates were found in the datasets.' };
-  }
-
   const hourly = toHourlyBuckets(merged);
-  if (hourly.length < 2) {
-    return { error: 'Need at least two hourly buckets after preprocessing.' };
-  }
+  if (hourly.length < 2) return { error: 'Insufficient data after grouping.' };
 
+  // System Configuration (No more virtual capital inputs!)
   const lowWidth = Number(config.lowWidth ?? 0.75) / 100;
-  const midWidth = Number(config.midWidth ?? 2) / 100;
-  const highWidth = Number(config.highWidth ?? 5) / 100;
-  const sigmaThreshold = Number(config.sigmaThreshold ?? 1);
+  const midWidth = Number(config.midWidth ?? 2.0) / 100;
+  const highWidth = Number(config.highWidth ?? 5.0) / 100;
+  const sigmaThreshold = Number(config.sigmaThreshold ?? 1.0);
   const lookbackHours = Math.max(5, Number(config.lookbackHours ?? 24));
-  const corrLookback = Math.max(5, Number(config.corrLookbackHours ?? 24));
-  const correlationImpact = clamp(Number(config.correlationImpact ?? 0.6), 0, 1);
-  const recenterTrigger = clamp(Number(config.recenterTriggerPct ?? 75) / 100, 0.1, 1.5);
+  const recenterTrigger = Number(config.recenterTriggerPct ?? 75) / 100;
   const feeRate = Number(config.feePct ?? 0.3) / 100;
-  const pauseHighVol = Boolean(config.pauseHighVol ?? false);
 
+  // 1. Initial State Deployment
   const p1Init = hourly[0].close1;
   const p2Init = hourly[0].close2;
-  const virtualCapital = Number(config.virtualCapital ?? (realCapital * 5));
-
-  const xInit = virtualCapital / p1Init;
-  const yInit = virtualCapital / p2Init;
-  const invariant = xInit * yInit;
-
-  let rx = floorUnits((realCapital / 2) / p1Init);
-  let ry = floorUnits((realCapital / 2) / p2Init);
+  
+  // 50:50 Value Split
+  let rx = (realCapital / 2) / p1Init;
+  let ry = (realCapital / 2) / p2Init;
   const rxInit = rx;
   const ryInit = ry;
 
-  const xOff = xInit - rxInit;
-  const yOff = yInit - ryInit;
-
   let poolCash = 0;
-  let centerRatio = p1Init / p2Init;
   let currentMode = 'MID';
   let recenterCount = 0;
-
-  const modeHours = { LOW: 0, MID: 0, HIGH: 0 };
   const swapRecords = [];
+
+  // Anchor Setup
+  let Pc = p1Init / p2Init;
+  let activeWidth = midWidth;
+  let Pa = Pc * (1 - activeWidth / 2);
+  let Pb = Pc * (1 + activeWidth / 2);
+  let L = calculateLiquidity(rx, ry, Pc, Pa, Pb);
 
   for (let index = 1; index < hourly.length; index += 1) {
     const row = hourly[index];
-    const ratio = row.close1 / row.close2;
+    const P_current = row.close1 / row.close2;
 
-    const volLookback = hourly.slice(Math.max(0, index - lookbackHours), index).map((entry) => entry.hourlyVolume);
+    // A. Mode & Volatility Check
+    const volLookback = hourly.slice(Math.max(0, index - lookbackHours), index).map((e) => e.hourlyVolume);
     currentMode = getMode(row.hourlyVolume, volLookback, sigmaThreshold);
-    modeHours[currentMode] += 1;
+    activeWidth = widthByMode(currentMode, lowWidth, midWidth, highWidth);
 
-    const corrWindow = hourly.slice(Math.max(0, index - corrLookback), index);
-    const rollingCorr = correlation(
-      corrWindow.map((entry) => entry.ret1),
-      corrWindow.map((entry) => entry.ret2),
-    );
+    // B. Calculate Drift & Check Recenter
+    let driftPct = 0;
+    if (P_current > Pc) {
+      driftPct = (P_current - Pc) / (Pb - Pc);
+    } else if (P_current < Pc) {
+      driftPct = (Pc - P_current) / (Pc - Pa);
+    }
 
-    const baseWidth = widthByMode(currentMode, lowWidth, midWidth, highWidth);
-    const dynamicWidth = clamp(
-      baseWidth * (1 + (1 - Math.abs(rollingCorr)) * correlationImpact),
-      lowWidth * 0.5,
-      highWidth * 2,
-    );
+    if (driftPct >= recenterTrigger) {
+      // DYNAMIC RE-CENTER EXECUTION
+      const currentPortfolioValue = (rx * row.close1) + (ry * row.close2);
+      
+      // Target perfectly balanced 50:50 inventory at the new price
+      const targetRx = (currentPortfolioValue / 2) / row.close1;
+      const targetRy = (currentPortfolioValue / 2) / row.close2;
 
-    const drift = Math.abs(ratio / centerRatio - 1);
-    const needsRecenter = drift >= (dynamicWidth * recenterTrigger);
+      // Calculate the rebalancing swap cost
+      const valueTraded = Math.abs(rx - targetRx) * row.close1;
+      const rebalanceFee = valueTraded * feeRate;
+      
+      poolCash -= rebalanceFee; // The cost of shifting the anchor
+      rx = targetRx;
+      ry = targetRy;
 
-    if (needsRecenter && !(pauseHighVol && currentMode === 'HIGH')) {
-      centerRatio = ratio;
+      // Deploy New Anchors
+      Pc = P_current;
+      Pa = Pc * (1 - activeWidth / 2);
+      Pb = Pc * (1 + activeWidth / 2);
+      L = calculateLiquidity(rx, ry, Pc, Pa, Pb);
+      
       recenterCount += 1;
-    }
-
-    const xPrime = Math.sqrt(invariant / ratio);
-    const yPrime = Math.sqrt(invariant * ratio);
-    const targetRx = Math.max(0, xPrime - xOff);
-    const targetRy = Math.max(0, yPrime - yOff);
-
-    let dx = 0;
-    let dy = 0;
-    let tradeFee = 0;
-    let netProfit = 0;
-    let tradeExecuted = false;
-    let action = '';
-
-    if (rx > targetRx && targetRy > ry) {
-      dx = Math.min(floorUnits(rx - targetRx), rx);
-      dy = floorUnits(targetRy - ry);
-
-      if (dx >= 1 && dy >= 1) {
-        const revenue = dx * row.close1;
-        const cost = dy * row.close2;
-        tradeFee = revenue * feeRate;
-        netProfit = revenue - cost - tradeFee;
-        if (netProfit > 0) {
-          rx -= dx;
-          ry += dy;
-          action = 'Sell Asset 1 / Buy Asset 2';
-          tradeExecuted = true;
-        }
-      }
-    } else if (rx < targetRx && targetRy < ry) {
-      dx = floorUnits(targetRx - rx);
-      dy = Math.min(floorUnits(ry - targetRy), ry);
-
-      if (dx >= 1 && dy >= 1) {
-        const revenue = dy * row.close2;
-        const cost = dx * row.close1;
-        tradeFee = revenue * feeRate;
-        netProfit = revenue - cost - tradeFee;
-        if (netProfit > 0) {
-          rx += dx;
-          ry -= dy;
-          action = 'Buy Asset 1 / Sell Asset 2';
-          tradeExecuted = true;
-        }
-      }
-    }
-
-    if (tradeExecuted) {
-      poolCash += netProfit;
+      
       swapRecords.push({
         date: row.date.toISOString(),
+        action: 'DYNAMIC RE-CENTER',
         mode: currentMode,
-        rollingCorrelation: rollingCorr,
-        dynamicWidthPct: dynamicWidth * 100,
-        action,
-        asset1Price: row.close1,
-        asset2Price: row.close2,
-        asset1Swapped: dx,
-        asset2Swapped: dy,
-        brokeragePaid: tradeFee,
-        netProfitInr: netProfit,
+        netProfitInr: -rebalanceFee,
         accumulatedCash: poolCash,
-        realAsset1Balance: rx,
-        realAsset2Balance: ry,
-        recentered: needsRecenter,
+        asset1Price: row.close1,
+        asset2Price: row.close2
       });
+      continue; // Skip normal harvesting this hour since we just rebuilt the pool
+    }
+
+    // C. Standard Harvesting (Within Range)
+    const targetRx = getTargetX(L, P_current, Pa, Pb);
+    const targetRy = getTargetY(L, P_current, Pa, Pb);
+
+    const dx = rx - targetRx;
+    const dy = targetRy - ry;
+
+    // If there is a meaningful discrepancy, arbitrageurs trade with our pool
+    if (Math.abs(dx) > 0.001 && Math.abs(dy) > 0.001) {
+      let revenue = 0;
+      let cost = 0;
+      let actionStr = '';
+
+      if (dx > 0) { // Pool sells Asset 1, buys Asset 2
+        revenue = dx * row.close1;
+        cost = dy * row.close2;
+        actionStr = 'Harvest: Sell 1 / Buy 2';
+      } else {      // Pool buys Asset 1, sells Asset 2
+        revenue = dy * row.close2;
+        cost = Math.abs(dx) * row.close1;
+        actionStr = 'Harvest: Buy 1 / Sell 2';
+      }
+
+      const tradeFee = revenue * feeRate;
+      const netProfit = revenue - cost - tradeFee;
+
+      // STT / Friction Guard: Only process if the micro-trend generated real Alpha
+      if (netProfit > 0) {
+        rx = targetRx;
+        ry = targetRy;
+        poolCash += netProfit;
+
+        swapRecords.push({
+          date: row.date.toISOString(),
+          mode: currentMode,
+          action: actionStr,
+          netProfitInr: netProfit,
+          accumulatedCash: poolCash,
+          asset1Price: row.close1,
+          asset2Price: row.close2
+        });
+      }
     }
   }
 
+  // 4. Final Performance Calculation
   const last = hourly[hourly.length - 1];
   const holdValue = (rxInit * last.close1) + (ryInit * last.close2);
   const poolAssetValue = (rx * last.close1) + (ry * last.close2);
+  
   const impermanentLossInr = poolAssetValue - holdValue;
   const impermanentLossPct = holdValue > 0 ? ((poolAssetValue / holdValue) - 1) * 100 : 0;
-  const totalFinalValue = poolAssetValue + poolCash;
-  const initialCapital = (rxInit * p1Init) + (ryInit * p2Init);
-  const totalRoiPct = initialCapital > 0 ? ((totalFinalValue / initialCapital) - 1) * 100 : 0;
+  
+  const totalFinalValue = poolAssetValue + poolCash; // Current Assets + Harvested Alpha
+  const totalRoiPct = realCapital > 0 ? ((totalFinalValue / realCapital) - 1) * 100 : 0;
 
   return {
     swaps: swapRecords,
     results: {
       totalSwaps: swapRecords.length,
+      recenterCount,
       poolCash,
       holdValue,
       poolAssetValue,
@@ -331,18 +334,8 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
       impermanentLossInr,
       impermanentLossPct,
       totalRoiPct,
-      initialCapital,
-      initialAsset1Units: rxInit,
-      initialAsset2Units: ryInit,
-      finalAsset1Units: rx,
-      finalAsset2Units: ry,
-      lowModeHours: modeHours.LOW,
-      midModeHours: modeHours.MID,
-      highModeHours: modeHours.HIGH,
-      recenterCount,
+      initialCapital: realCapital,
       feePct: feeRate * 100,
-      corrLookbackHours: corrLookback,
-      lookbackHours,
     },
   };
 }
