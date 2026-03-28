@@ -13,8 +13,8 @@
           <p class="eyebrow">Hourly Event-Driven ALM</p>
           <h1>Arrakis-Style Stock-to-Stock ALM Dashboard</h1>
           <p class="lede">
-            Upload two 1-minute CSV files with <code>date</code>, <code>close</code>, and <code>volume</code>. Data is grouped
-            into hourly buckets and traded with Uniswap v3-style concentrated liquidity math.
+            Upload two 1-minute CSV files with <code>date</code>, <code>close</code>, and <code>volume</code>. The engine applies
+            dynamic risk modes, dynamic concentration width, dynamic recentering, and whole-unit swaps.
           </p>
         </div>
 
@@ -23,6 +23,14 @@
           <label>
             Total Real Capital (₹)
             <input id="realCapital" type="number" min="0" step="100000" value="2000000" />
+          </label>
+          <label>
+            Virtual Capital per Asset (₹)
+            <input id="virtualCapital" type="number" min="0" step="500000" value="10000000" />
+          </label>
+          <label>
+            0.3% Fee Setting (%)
+            <input id="feePct" type="number" min="0" step="0.05" value="0.3" />
           </label>
           <label>
             LOW Width (%)
@@ -41,12 +49,35 @@
             <input id="sigmaThreshold" type="number" min="0.1" step="0.1" value="1" />
           </label>
           <label>
-            Lookback Hours
+            Volume Lookback (Hours)
             <input id="lookbackHours" type="number" min="5" step="1" value="24" />
+          </label>
+          <label>
+            Correlation Lookback (Hours)
+            <input id="corrLookbackHours" type="number" min="5" step="1" value="24" />
+          </label>
+          <label>
+            Correlation Impact (0-1)
+            <input id="correlationImpact" type="number" min="0" max="1" step="0.05" value="0.6" />
+          </label>
+          <label>
+            Recenter Trigger (% of Width)
+            <input id="recenterTriggerPct" type="number" min="10" max="150" step="5" value="75" />
           </label>
           <label>
             <input id="pauseHighVol" type="checkbox" /> Pause swaps in HIGH mode
           </label>
+        </section>
+
+        <section class="panel small">
+          <h2>Settings Guide</h2>
+          <ul>
+            <li><b>LOW/MID/HIGH Width</b>: narrower = tighter concentration, wider = safer inventory.</li>
+            <li><b>Sigma Threshold</b>: higher means fewer mode switches.</li>
+            <li><b>Correlation Impact</b>: high impact widens ranges more when correlation weakens.</li>
+            <li><b>Recenter Trigger</b>: default 75 means re-center when ratio drifts 75% of current width.</li>
+            <li><b>Fee Setting</b>: flat friction deducted from swap revenue each trade.</li>
+          </ul>
         </section>
 
         <section class="panel">
@@ -77,7 +108,6 @@
             <li><code>close</code> — close price column</li>
             <li><code>volume</code> — trade volume column (required)</li>
             <li>Swaps are whole-unit stock quantities only</li>
-            <li>Flat 0.3% friction on swap revenue</li>
           </ul>
         </section>
       </aside>
@@ -99,7 +129,7 @@
           <div id="metricsGrid" class="metric-grid">
             <div class="empty-state">
               <h3>No simulation results yet</h3>
-              <p>Upload two CSV files and run the model to see ROI, risk modes, and swap history.</p>
+              <p>Upload two CSV files and run the model to see ROI, risk modes, recentering, and swap history.</p>
             </div>
           </div>
         </div>
@@ -108,14 +138,14 @@
           <div class="panel-header">
             <div>
               <p class="eyebrow">Hourly ALM Swap History</p>
-              <h2>Executed re-center swaps</h2>
+              <h2>Executed inventory rebalances</h2>
             </div>
             <span id="swapCount" class="pill hidden"></span>
           </div>
           <div id="swapTableContainer">
             <div class="empty-state compact">
               <h3>No profitable swaps found</h3>
-              <p>Adjust risk-mode settings and run again.</p>
+              <p>Adjust risk settings and run again.</p>
             </div>
           </div>
         </div>

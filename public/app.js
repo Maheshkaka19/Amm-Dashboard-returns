@@ -11,13 +11,20 @@ const asset1FileName = document.getElementById('asset1FileName');
 const asset2FileName = document.getElementById('asset2FileName');
 const asset1Label = document.getElementById('asset1Label');
 const asset2Label = document.getElementById('asset2Label');
+
 const realCapitalInput = document.getElementById('realCapital');
+const virtualCapitalInput = document.getElementById('virtualCapital');
+const feePctInput = document.getElementById('feePct');
 const lowWidthInput = document.getElementById('lowWidth');
 const midWidthInput = document.getElementById('midWidth');
 const highWidthInput = document.getElementById('highWidth');
 const sigmaThresholdInput = document.getElementById('sigmaThreshold');
 const lookbackHoursInput = document.getElementById('lookbackHours');
+const corrLookbackHoursInput = document.getElementById('corrLookbackHours');
+const correlationImpactInput = document.getElementById('correlationImpact');
+const recenterTriggerPctInput = document.getElementById('recenterTriggerPct');
 const pauseHighVolInput = document.getElementById('pauseHighVol');
+
 const runSimulationButton = document.getElementById('runSimulation');
 const statusBanner = document.getElementById('statusBanner');
 const metricsGrid = document.getElementById('metricsGrid');
@@ -47,6 +54,22 @@ function setStatus(type, message) {
   statusBanner.innerHTML = `<strong>${type.toUpperCase()}:</strong> <span>${message}</span>`;
 }
 
+function getConfig() {
+  return {
+    virtualCapital: Number(virtualCapitalInput.value),
+    feePct: Number(feePctInput.value),
+    lowWidth: Number(lowWidthInput.value),
+    midWidth: Number(midWidthInput.value),
+    highWidth: Number(highWidthInput.value),
+    sigmaThreshold: Number(sigmaThresholdInput.value),
+    lookbackHours: Number(lookbackHoursInput.value),
+    corrLookbackHours: Number(corrLookbackHoursInput.value),
+    correlationImpact: Number(correlationImpactInput.value),
+    recenterTriggerPct: Number(recenterTriggerPctInput.value),
+    pauseHighVol: pauseHighVolInput.checked,
+  };
+}
+
 async function handleRunSimulation() {
   if (!asset1File.files[0] || !asset2File.files[0]) {
     setStatus('error', 'Please upload both CSV files before running the simulation.');
@@ -55,7 +78,7 @@ async function handleRunSimulation() {
 
   runSimulationButton.disabled = true;
   runSimulationButton.textContent = 'Running Simulation...';
-  setStatus('info', 'Processing hourly event-driven ALM engine...');
+  setStatus('info', 'Processing hourly ALM with dynamic correlation, concentration, and recentering...');
 
   try {
     const [text1, text2] = await Promise.all([asset1File.files[0].text(), asset2File.files[0].text()]);
@@ -63,14 +86,7 @@ async function handleRunSimulation() {
       parseCsv(text1),
       parseCsv(text2),
       Number(realCapitalInput.value),
-      {
-        lowWidth: Number(lowWidthInput.value),
-        midWidth: Number(midWidthInput.value),
-        highWidth: Number(highWidthInput.value),
-        sigmaThreshold: Number(sigmaThresholdInput.value),
-        lookbackHours: Number(lookbackHoursInput.value),
-        pauseHighVol: pauseHighVolInput.checked,
-      },
+      getConfig(),
     );
 
     if (result.error) {
@@ -85,9 +101,9 @@ async function handleRunSimulation() {
       renderMetrics();
       renderTable();
       if (result.results.totalFinalValue > result.results.holdValue) {
-        setStatus('success', 'Profitable against holding: accumulated swap cash overcame impermanent loss.');
+        setStatus('success', 'Profitable against holding: dynamic ALM outperformed passive holding.');
       } else {
-        setStatus('warning', 'Loss against holding: impermanent loss exceeded the cash accumulated from swaps.');
+        setStatus('warning', 'Underperformed holding. Try wider widths, lower recenter sensitivity, or lower fee.');
       }
     }
   } catch (error) {
@@ -103,7 +119,7 @@ function renderMetrics() {
     metricsGrid.innerHTML = `
       <div class="empty-state">
         <h3>No simulation results yet</h3>
-        <p>Upload two CSV files and run the model to see ROI, risk modes, and swap history.</p>
+        <p>Upload two CSV files and run the model to see ROI, risk modes, recentering, and swap history.</p>
       </div>`;
     downloadCsvButton.classList.add('hidden');
     return;
@@ -112,6 +128,8 @@ function renderMetrics() {
   const cards = [
     ['Initial Real Capital', currencyFormatter.format(state.results.initialCapital)],
     ['Total Swaps Executed', numberFormatter(0).format(state.results.totalSwaps)],
+    ['Recenter Count', numberFormatter(0).format(state.results.recenterCount)],
+    ['Fee Applied', `${numberFormatter(2).format(state.results.feePct)}%`],
     ['Accumulated Swap Cash', currencyFormatter.format(state.results.poolCash)],
     ['Total Final Value', currencyFormatter.format(state.results.totalFinalValue), `${numberFormatter(2).format(state.results.totalRoiPct)}% ROI`, state.results.totalRoiPct >= 0],
     ['Hold Value (Do Nothing)', currencyFormatter.format(state.results.holdValue)],
@@ -138,7 +156,7 @@ function renderTable() {
     swapTableContainer.innerHTML = `
       <div class="empty-state compact">
         <h3>No profitable swaps found</h3>
-        <p>Adjust mode widths, sigma threshold, or lookback window and try again.</p>
+        <p>Adjust risk settings and run again.</p>
       </div>`;
     return;
   }
@@ -154,12 +172,15 @@ function renderTable() {
           <tr>
             <th>Date</th>
             <th>Risk Mode</th>
+            <th>Correlation</th>
+            <th>Dynamic Width</th>
+            <th>Recentered</th>
             <th>Action</th>
             <th>${label1} Price</th>
             <th>${label2} Price</th>
             <th>${label1} Swapped</th>
             <th>${label2} Swapped</th>
-            <th>Brokerage + STT (0.3%)</th>
+            <th>Fee Paid</th>
             <th>Net Profit</th>
             <th>Accumulated Cash</th>
             <th>${label1} Balance</th>
@@ -171,6 +192,9 @@ function renderTable() {
             <tr>
               <td>${new Date(swap.date).toLocaleString('en-IN')}</td>
               <td>${swap.mode}</td>
+              <td>${numberFormatter(3).format(swap.rollingCorrelation)}</td>
+              <td>${numberFormatter(2).format(swap.dynamicWidthPct)}%</td>
+              <td>${swap.recentered ? 'Yes' : 'No'}</td>
               <td>${swap.action}</td>
               <td>${currencyFormatter.format(swap.asset1Price)}</td>
               <td>${currencyFormatter.format(swap.asset2Price)}</td>
@@ -188,8 +212,8 @@ function renderTable() {
 }
 
 function downloadCsv(rows) {
-  const headers = ['Date','Mode','Action','Asset_1_Price','Asset_2_Price','Asset_1_Swapped','Asset_2_Swapped','Brokerage_Paid','Net_Profit_INR','Accumulated_Cash','Real_Asset_1_Balance','Real_Asset_2_Balance'];
-  const csvLines = [headers.join(',')].concat(rows.map((row) => [row.date,row.mode,row.action,row.asset1Price,row.asset2Price,row.asset1Swapped,row.asset2Swapped,row.brokeragePaid,row.netProfitInr,row.accumulatedCash,row.realAsset1Balance,row.realAsset2Balance].join(',')));
+  const headers = ['Date','Mode','Rolling_Correlation','Dynamic_Width_Pct','Recentered','Action','Asset_1_Price','Asset_2_Price','Asset_1_Swapped','Asset_2_Swapped','Fee_Paid','Net_Profit_INR','Accumulated_Cash','Real_Asset_1_Balance','Real_Asset_2_Balance'];
+  const csvLines = [headers.join(',')].concat(rows.map((row) => [row.date,row.mode,row.rollingCorrelation,row.dynamicWidthPct,row.recentered,row.action,row.asset1Price,row.asset2Price,row.asset1Swapped,row.asset2Swapped,row.brokeragePaid,row.netProfitInr,row.accumulatedCash,row.realAsset1Balance,row.realAsset2Balance].join(',')));
   const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');

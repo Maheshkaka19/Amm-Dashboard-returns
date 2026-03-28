@@ -61,6 +61,24 @@ function stdDev(values, avg) {
   return Math.sqrt(variance);
 }
 
+function correlation(valuesA, valuesB) {
+  if (!valuesA.length || valuesA.length !== valuesB.length) return 0;
+  const meanA = mean(valuesA);
+  const meanB = mean(valuesB);
+  let numerator = 0;
+  let varA = 0;
+  let varB = 0;
+  for (let index = 0; index < valuesA.length; index += 1) {
+    const da = valuesA[index] - meanA;
+    const db = valuesB[index] - meanB;
+    numerator += da * db;
+    varA += da * da;
+    varB += db * db;
+  }
+  const denominator = Math.sqrt(varA * varB);
+  return denominator > 0 ? numerator / denominator : 0;
+}
+
 function getHourBucket(date) {
   const bucket = new Date(date);
   bucket.setMinutes(0, 0, 0);
@@ -110,71 +128,38 @@ function toHourlyBuckets(mergedRows) {
     bucket.close2 = row.close2;
     bucket.hourlyVolume += row.volume1 + row.volume2;
   }
-  return [...map.values()].sort((a, b) => a.date - b.date);
-}
 
-function calcRangeBounds(centerPrice, widthPct) {
-  return {
-    pa: centerPrice * (1 - widthPct),
-    pb: centerPrice * (1 + widthPct),
-  };
-}
-
-function calcRealFromLiquidity(liquidity, price, pa, pb) {
-  const sqrtP = Math.sqrt(price);
-  const sqrtPa = Math.sqrt(pa);
-  const sqrtPb = Math.sqrt(pb);
-
-  if (sqrtP <= sqrtPa) {
-    return {
-      x: liquidity * ((1 / sqrtPa) - (1 / sqrtPb)),
-      y: 0,
-    };
+  const hourly = [...map.values()].sort((a, b) => a.date - b.date);
+  for (let i = 0; i < hourly.length; i += 1) {
+    if (i === 0) {
+      hourly[i].ret1 = 0;
+      hourly[i].ret2 = 0;
+    } else {
+      hourly[i].ret1 = (hourly[i].close1 / hourly[i - 1].close1) - 1;
+      hourly[i].ret2 = (hourly[i].close2 / hourly[i - 1].close2) - 1;
+    }
   }
-
-  if (sqrtP >= sqrtPb) {
-    return {
-      x: 0,
-      y: liquidity * (sqrtPb - sqrtPa),
-    };
-  }
-
-  return {
-    x: liquidity * ((1 / sqrtP) - (1 / sqrtPb)),
-    y: liquidity * (sqrtP - sqrtPa),
-  };
-}
-
-function calcLiquidityFromReal(x, y, price, pa, pb) {
-  const sqrtP = Math.sqrt(price);
-  const sqrtPa = Math.sqrt(pa);
-  const sqrtPb = Math.sqrt(pb);
-
-  const lx = ((1 / sqrtP) - (1 / sqrtPb)) > 0 ? x / ((1 / sqrtP) - (1 / sqrtPb)) : 0;
-  const ly = (sqrtP - sqrtPa) > 0 ? y / (sqrtP - sqrtPa) : 0;
-
-  if (lx > 0 && ly > 0) return Math.min(lx, ly);
-  return Math.max(lx, ly, 0);
+  return hourly;
 }
 
 function getMode(hourlyVolume, lookbackVolumes, sigmaThreshold) {
-  if (!lookbackVolumes.length) {
-    return { mode: 'MID', meanVolume: hourlyVolume, stdVolume: 0 };
-  }
+  if (!lookbackVolumes.length) return 'MID';
+  const avg = mean(lookbackVolumes);
+  const sigma = stdDev(lookbackVolumes, avg);
+  const band = sigmaThreshold * sigma;
+  if (hourlyVolume < (avg - band)) return 'LOW';
+  if (hourlyVolume > (avg + band)) return 'HIGH';
+  return 'MID';
+}
 
-  const meanVolume = mean(lookbackVolumes);
-  const stdVolume = stdDev(lookbackVolumes, meanVolume);
-  const sigmaBand = sigmaThreshold * stdVolume;
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
 
-  if (hourlyVolume < (meanVolume - sigmaBand)) {
-    return { mode: 'LOW', meanVolume, stdVolume };
-  }
-
-  if (hourlyVolume > (meanVolume + sigmaBand)) {
-    return { mode: 'HIGH', meanVolume, stdVolume };
-  }
-
-  return { mode: 'MID', meanVolume, stdVolume };
+function widthByMode(mode, lowWidth, midWidth, highWidth) {
+  if (mode === 'LOW') return lowWidth;
+  if (mode === 'HIGH') return highWidth;
+  return midWidth;
 }
 
 export function runAlmSimulation(df1, df2, realCapital, config = {}) {
@@ -194,118 +179,135 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
     return { error: 'Need at least two hourly buckets after preprocessing.' };
   }
 
-  const lowWidth = (Number(config.lowWidth ?? 0.75) / 100);
-  const midWidth = (Number(config.midWidth ?? 2) / 100);
-  const highWidth = (Number(config.highWidth ?? 5) / 100);
+  const lowWidth = Number(config.lowWidth ?? 0.75) / 100;
+  const midWidth = Number(config.midWidth ?? 2) / 100;
+  const highWidth = Number(config.highWidth ?? 5) / 100;
   const sigmaThreshold = Number(config.sigmaThreshold ?? 1);
   const lookbackHours = Math.max(5, Number(config.lookbackHours ?? 24));
+  const corrLookback = Math.max(5, Number(config.corrLookbackHours ?? 24));
+  const correlationImpact = clamp(Number(config.correlationImpact ?? 0.6), 0, 1);
+  const recenterTrigger = clamp(Number(config.recenterTriggerPct ?? 75) / 100, 0.1, 1.5);
+  const feeRate = Number(config.feePct ?? 0.3) / 100;
   const pauseHighVol = Boolean(config.pauseHighVol ?? false);
-  const fee = 0.003;
 
-  const first = hourly[0];
-  const p1Init = first.close1;
-  const p2Init = first.close2;
-  const priceInit = p1Init / p2Init;
+  const p1Init = hourly[0].close1;
+  const p2Init = hourly[0].close2;
+  const virtualCapital = Number(config.virtualCapital ?? (realCapital * 5));
+
+  const xInit = virtualCapital / p1Init;
+  const yInit = virtualCapital / p2Init;
+  const invariant = xInit * yInit;
 
   let rx = floorUnits((realCapital / 2) / p1Init);
   let ry = floorUnits((realCapital / 2) / p2Init);
   const rxInit = rx;
   const ryInit = ry;
 
+  const xOff = xInit - rxInit;
+  const yOff = yInit - ryInit;
+
   let poolCash = 0;
-  let centerPrice = priceInit;
-  let mode = 'MID';
-  let widthPct = midWidth;
+  let centerRatio = p1Init / p2Init;
+  let currentMode = 'MID';
+  let recenterCount = 0;
 
-  let { pa, pb } = calcRangeBounds(centerPrice, widthPct);
-  let liquidity = calcLiquidityFromReal(rx, ry, centerPrice, pa, pb);
-
-  const modeStats = { LOW: 0, MID: 0, HIGH: 0 };
+  const modeHours = { LOW: 0, MID: 0, HIGH: 0 };
   const swapRecords = [];
 
   for (let index = 1; index < hourly.length; index += 1) {
     const row = hourly[index];
-    const price = row.close1 / row.close2;
-    const lookback = hourly.slice(Math.max(0, index - lookbackHours), index).map((entry) => entry.hourlyVolume);
-    const modeInfo = getMode(row.hourlyVolume, lookback, sigmaThreshold);
-    mode = modeInfo.mode;
-    modeStats[mode] += 1;
+    const ratio = row.close1 / row.close2;
 
-    widthPct = mode === 'LOW' ? lowWidth : mode === 'HIGH' ? highWidth : midWidth;
+    const volLookback = hourly.slice(Math.max(0, index - lookbackHours), index).map((entry) => entry.hourlyVolume);
+    currentMode = getMode(row.hourlyVolume, volLookback, sigmaThreshold);
+    modeHours[currentMode] += 1;
 
-    const driftPct = Math.abs(price / centerPrice - 1);
-    const recenterTrigger = driftPct >= (0.75 * widthPct);
+    const corrWindow = hourly.slice(Math.max(0, index - corrLookback), index);
+    const rollingCorr = correlation(
+      corrWindow.map((entry) => entry.ret1),
+      corrWindow.map((entry) => entry.ret2),
+    );
 
-    if (recenterTrigger && !(pauseHighVol && mode === 'HIGH')) {
-      const held = calcRealFromLiquidity(liquidity, price, pa, pb);
-      const currentX = floorUnits(held.x);
-      const currentY = floorUnits(held.y);
+    const baseWidth = widthByMode(currentMode, lowWidth, midWidth, highWidth);
+    const dynamicWidth = clamp(
+      baseWidth * (1 + (1 - Math.abs(rollingCorr)) * correlationImpact),
+      lowWidth * 0.5,
+      highWidth * 2,
+    );
 
-      const totalValue = (currentX * row.close1) + (currentY * row.close2);
-      const targetX = floorUnits((totalValue / 2) / row.close1);
-      const targetY = floorUnits((totalValue / 2) / row.close2);
+    const drift = Math.abs(ratio / centerRatio - 1);
+    const needsRecenter = drift >= (dynamicWidth * recenterTrigger);
 
-      let dx = 0;
-      let dy = 0;
-      let action = 'Re-center';
-      let tradeFee = 0;
-      let netProfit = 0;
-      let didTrade = false;
+    if (needsRecenter && !(pauseHighVol && currentMode === 'HIGH')) {
+      centerRatio = ratio;
+      recenterCount += 1;
+    }
 
-      if (currentX > targetX) {
-        dx = currentX - targetX;
-        const grossRevenue = dx * row.close1;
-        tradeFee = grossRevenue * fee;
-        const spendable = grossRevenue - tradeFee;
-        dy = floorUnits(spendable / row.close2);
+    const xPrime = Math.sqrt(invariant / ratio);
+    const yPrime = Math.sqrt(invariant * ratio);
+    const targetRx = Math.max(0, xPrime - xOff);
+    const targetRy = Math.max(0, yPrime - yOff);
+
+    let dx = 0;
+    let dy = 0;
+    let tradeFee = 0;
+    let netProfit = 0;
+    let tradeExecuted = false;
+    let action = '';
+
+    if (rx > targetRx && targetRy > ry) {
+      dx = Math.min(floorUnits(rx - targetRx), rx);
+      dy = floorUnits(targetRy - ry);
+
+      if (dx >= 1 && dy >= 1) {
+        const revenue = dx * row.close1;
         const cost = dy * row.close2;
-        netProfit = grossRevenue - cost - tradeFee;
-        if (dy >= 1 && netProfit > 0) {
-          rx = currentX - dx;
-          ry = currentY + dy;
-          action = 'Re-center: Sell Asset 1 / Buy Asset 2';
-          didTrade = true;
+        tradeFee = revenue * feeRate;
+        netProfit = revenue - cost - tradeFee;
+        if (netProfit > 0) {
+          rx -= dx;
+          ry += dy;
+          action = 'Sell Asset 1 / Buy Asset 2';
+          tradeExecuted = true;
         }
-      } else if (currentY > targetY) {
-        dy = currentY - targetY;
-        const grossRevenue = dy * row.close2;
-        tradeFee = grossRevenue * fee;
-        const spendable = grossRevenue - tradeFee;
-        dx = floorUnits(spendable / row.close1);
+      }
+    } else if (rx < targetRx && targetRy < ry) {
+      dx = floorUnits(targetRx - rx);
+      dy = Math.min(floorUnits(ry - targetRy), ry);
+
+      if (dx >= 1 && dy >= 1) {
+        const revenue = dy * row.close2;
         const cost = dx * row.close1;
-        netProfit = grossRevenue - cost - tradeFee;
-        if (dx >= 1 && netProfit > 0) {
-          rx = currentX + dx;
-          ry = currentY - dy;
-          action = 'Re-center: Buy Asset 1 / Sell Asset 2';
-          didTrade = true;
+        tradeFee = revenue * feeRate;
+        netProfit = revenue - cost - tradeFee;
+        if (netProfit > 0) {
+          rx += dx;
+          ry -= dy;
+          action = 'Buy Asset 1 / Sell Asset 2';
+          tradeExecuted = true;
         }
-      } else {
-        rx = currentX;
-        ry = currentY;
       }
+    }
 
-      if (didTrade) {
-        poolCash += netProfit;
-        swapRecords.push({
-          date: row.date.toISOString(),
-          mode,
-          action,
-          asset1Price: row.close1,
-          asset2Price: row.close2,
-          asset1Swapped: dx,
-          asset2Swapped: dy,
-          brokeragePaid: tradeFee,
-          netProfitInr: netProfit,
-          accumulatedCash: poolCash,
-          realAsset1Balance: rx,
-          realAsset2Balance: ry,
-        });
-      }
-
-      centerPrice = price;
-      ({ pa, pb } = calcRangeBounds(centerPrice, widthPct));
-      liquidity = calcLiquidityFromReal(rx, ry, centerPrice, pa, pb);
+    if (tradeExecuted) {
+      poolCash += netProfit;
+      swapRecords.push({
+        date: row.date.toISOString(),
+        mode: currentMode,
+        rollingCorrelation: rollingCorr,
+        dynamicWidthPct: dynamicWidth * 100,
+        action,
+        asset1Price: row.close1,
+        asset2Price: row.close2,
+        asset1Swapped: dx,
+        asset2Swapped: dy,
+        brokeragePaid: tradeFee,
+        netProfitInr: netProfit,
+        accumulatedCash: poolCash,
+        realAsset1Balance: rx,
+        realAsset2Balance: ry,
+        recentered: needsRecenter,
+      });
     }
   }
 
@@ -334,9 +336,12 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
       initialAsset2Units: ryInit,
       finalAsset1Units: rx,
       finalAsset2Units: ry,
-      lowModeHours: modeStats.LOW,
-      midModeHours: modeStats.MID,
-      highModeHours: modeStats.HIGH,
+      lowModeHours: modeHours.LOW,
+      midModeHours: modeHours.MID,
+      highModeHours: modeHours.HIGH,
+      recenterCount,
+      feePct: feeRate * 100,
+      corrLookbackHours: corrLookback,
       lookbackHours,
     },
   };

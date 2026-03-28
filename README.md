@@ -14,12 +14,28 @@ Firebase App Hosting supports Next.js, Angular, and generic **Node.js apps**. Th
 ## Features
 
 - Upload two CSV datasets with `date`, `close`, and `volume` columns
-- Configure virtual capital, real capital, and brokerage fee assumptions
-- Run an hourly event-driven ALM engine with configurable LOW/MID/HIGH risk widths and sigma threshold
+- Run an hourly event-driven ALM engine with:
+  - dynamic volume risk mode switching (LOW / MID / HIGH)
+  - dynamic rolling correlation
+  - dynamic concentration width
+  - dynamic re-centering when drift reaches configured threshold
 - Restrict swaps to whole stock units only
-- Review summary KPIs and a detailed swap-history table
+- Configure swap friction fee (default 0.3%)
+- Review summary KPIs and detailed swap history
 - Download the full swap ledger as CSV
-- Deploy through GitHub with Firebase App Hosting
+
+## Settings guide
+
+- **Total Real Capital**: capital split 50:50 by value at initialization.
+- **Virtual Capital per Asset**: controls concentrated-curve depth and target inventory profile.
+- **0.3% Fee Setting**: flat friction (STT + brokerage) charged on swap revenue each trade.
+- **LOW/MID/HIGH Width (%)**: base concentration width per risk mode.
+- **Sigma Threshold**: sensitivity of mode switching using hourly volume mean ± sigma band.
+- **Volume Lookback (Hours)**: lookback used for mode detection statistics.
+- **Correlation Lookback (Hours)**: lookback used for rolling return correlation.
+- **Correlation Impact (0-1)**: how strongly weak correlation widens active concentration.
+- **Recenter Trigger (% of Width)**: drift threshold to recenter range around current ratio.
+- **Pause swaps in HIGH mode**: optional risk brake during volatile periods.
 
 ## Local development
 
@@ -48,8 +64,7 @@ npm start
    firebase login
    ```
 4. In the Firebase console, create a new **App Hosting** backend and connect your GitHub repository.
-5. App Hosting should now recognize this repository as a Node.js app and use `apphosting.yaml` to run `npm run build` and then start the service with `node server.mjs`, which listens on the `PORT` environment variable.
-6. After the first successful deploy, each new push to your connected branch can trigger another rollout.
+5. App Hosting uses `apphosting.yaml` to run `npm run build` and start with `node server.mjs`.
 
 ## CSV requirements
 
@@ -57,16 +72,19 @@ Each uploaded file must include:
 
 - `date`: a timestamp parseable by the browser `Date` API
 - `close`: numeric close price
-- swap execution uses whole stock units only (no fractional shares)
-- real pool balances are updated cumulatively from the initial stock quantities after each executed swap
-
+- `volume`: numeric traded volume
 
 ## Engine API
 
 `runAlmSimulation(df1, df2, realCapital, config)`
 
 Config fields:
-- `lowWidth`, `midWidth`, `highWidth` (percent widths)
+- `virtualCapital`
+- `feePct`
+- `lowWidth`, `midWidth`, `highWidth`
 - `sigmaThreshold`
 - `lookbackHours`
+- `corrLookbackHours`
+- `correlationImpact`
+- `recenterTriggerPct`
 - `pauseHighVol`
