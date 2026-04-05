@@ -1,254 +1,196 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AMM Volatility Harvesting Dashboard</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
-    <main class="page-shell">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>AMM Volatility Harvesting Dashboard</title>
+  <link rel="stylesheet" href="/styles.css"/>
+</head>
+<body>
+<main class="page-shell">
 
-      <!-- ── Sidebar ──────────────────────────────────────────── -->
-      <aside class="sidebar">
-        <div class="sidebar-top">
-          <p class="eyebrow">NSE Stock Pool · Whole-Share Trading · V3 Math</p>
-          <h1>AMM Volatility Harvesting</h1>
-          <p class="lede">
-            Two simultaneous NSE market orders simulate each AMM rebalance.
-            Buy leg + sell leg = cash arbitrage profit.
-            All quantities are <strong>whole shares only</strong>.
-            Fractional dust is discarded. Recentering incurs a real
-            rebalancing trade at full brokerage cost.
-          </p>
-        </div>
+  <!-- ── Sidebar ──────────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-top">
+      <p class="eyebrow">NSE Stock Pool · x·y = k · Whole Shares Only</p>
+      <h1>AMM Volatility Harvesting</h1>
+      <p class="lede">
+        Runs a self-managed <strong>constant-product pool</strong> (x·y = k) on
+        two NSE stocks. Each rebalance is simulated as two simultaneous market
+        orders — buy the input leg, AMM releases the output leg, sell it.
+        All quantities are <strong>whole shares</strong>. No fractions.
+        Profits accumulate as cash. IL is tracked separately.
+      </p>
+    </div>
 
-        <!-- Upload -->
-        <section class="panel">
-          <h2>Upload Datasets</h2>
-          <label class="upload-zone">
-            <span id="asset1FileName">Upload Asset 1 CSV (e.g., Reliance)</span>
-            <input id="asset1File" type="file" accept=".csv,text/csv" />
-          </label>
-          <label>Asset 1 Label <input id="asset1Label" value="Reliance" /></label>
-          <label class="upload-zone" style="margin-top:8px">
-            <span id="asset2FileName">Upload Asset 2 CSV (e.g., Kotak Bank)</span>
-            <input id="asset2File" type="file" accept=".csv,text/csv" />
-          </label>
-          <label>Asset 2 Label <input id="asset2Label" value="Kotak Bank" /></label>
-          <button id="runSimulation" class="primary-button">▶ Run Simulation</button>
-        </section>
+    <section class="panel">
+      <h2>Upload Datasets</h2>
+      <label class="upload-zone">
+        <span id="asset1FileName">Upload Asset 1 CSV (e.g., Reliance)</span>
+        <input id="asset1File" type="file" accept=".csv,text/csv"/>
+      </label>
+      <label>Asset 1 Label <input id="asset1Label" value="Reliance"/></label>
+      <label class="upload-zone" style="margin-top:8px">
+        <span id="asset2FileName">Upload Asset 2 CSV (e.g., Kotak Bank)</span>
+        <input id="asset2File" type="file" accept=".csv,text/csv"/>
+      </label>
+      <label>Asset 2 Label <input id="asset2Label" value="Kotak Bank"/></label>
+      <button id="runSimulation" class="primary-button">▶ Run Simulation</button>
+    </section>
 
-        <!-- Capital & Brokerage -->
-        <section class="panel">
-          <h2>Capital &amp; Brokerage</h2>
-          <label>
-            Total Capital (₹)
-            <input id="realCapital" type="number" min="0" step="100000" value="2000000" />
-          </label>
-          <div class="two-col">
-            <label>
-              Buy Brokerage (%)
-              <input id="buyBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15" />
-            </label>
-            <label>
-              Sell Brokerage (%)
-              <input id="sellBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15" />
-            </label>
-          </div>
-          <p class="hint">
-            0.15% buy + 0.15% sell = 0.30% round-trip (Zerodha/NSE standard).
-            Capital is split 50/50 by value, <strong>floored to whole shares</strong>.
-            Leftover cash from rounding is not deployed.
-          </p>
-        </section>
+    <section class="panel">
+      <h2>Capital &amp; Brokerage</h2>
+      <label>Total Capital (₹)
+        <input id="realCapital" type="number" min="0" step="100000" value="2000000"/>
+      </label>
+      <div class="two-col">
+        <label>Buy Brokerage (%)
+          <input id="buyBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
+        </label>
+        <label>Sell Brokerage (%)
+          <input id="sellBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
+        </label>
+      </div>
+      <p class="hint">Capital split 50/50 by value, floored to whole shares.
+      0.15%+0.15% = 0.30% round-trip (Zerodha standard).</p>
+    </section>
 
-        <!-- IL Stop-Loss -->
-        <section class="panel panel-danger">
-          <h2>🛑 IL Stop-Loss</h2>
-          <label>
-            Max Impermanent Loss (%)
-            <input id="ilStopLossPct" type="number" min="0" max="100" step="0.5" value="5" />
-          </label>
-          <p class="hint">
-            Halts <em>all</em> swapping once pool asset value drops more than this%
-            below the buy-and-hold value. Set to <code>0</code> to disable.
-          </p>
-        </section>
+    <section class="panel panel-danger">
+      <h2>🛑 IL Stop-Loss</h2>
+      <label>Max Impermanent Loss (%)
+        <input id="ilStopLossPct" type="number" min="0" max="100" step="0.5" value="0"/>
+      </label>
+      <p class="hint">Halts all new swaps once pool asset value drops more than this % below hold value. Set 0 to disable.</p>
+    </section>
 
-        <!-- Concentration widths -->
-        <section class="panel">
-          <h2>Concentration Range Widths</h2>
-          <div class="three-col">
-            <label>
-              LOW vol (%)
-              <input id="lowWidth" type="number" min="0.05" step="0.05" value="0.75" />
-            </label>
-            <label>
-              MID vol (%)
-              <input id="midWidth" type="number" min="0.05" step="0.1" value="2" />
-            </label>
-            <label>
-              HIGH vol (%)
-              <input id="highWidth" type="number" min="0.05" step="0.25" value="5" />
-            </label>
-          </div>
-          <p class="hint">
-            Narrower = more profit per swap, higher IL risk.<br/>
-            Wider = safer inventory, fewer profitable swaps.
-          </p>
-        </section>
+    <section class="panel">
+      <h2>Concentration Range</h2>
+      <div class="three-col">
+        <label>LOW vol (%)<input id="lowWidth" type="number" min="0.05" step="0.05" value="0.75"/></label>
+        <label>MID vol (%)<input id="midWidth" type="number" min="0.05" step="0.1"  value="2"/></label>
+        <label>HIGH vol (%)<input id="highWidth" type="number" min="0.05" step="0.25" value="5"/></label>
+      </div>
+      <p class="hint">Half-width of the price-ratio band. Swaps only execute when the
+      current ratio is within this % of the center. Narrower = more swaps per move, higher IL exposure.</p>
+    </section>
 
-        <!-- Dynamic params -->
-        <section class="panel">
-          <h2>Dynamic Correlation &amp; Recentering</h2>
-          <div class="two-col">
-            <label>
-              Corr. Lookback (hrs)
-              <input id="corrLookbackHours" type="number" min="2" step="1" value="24" />
-            </label>
-            <label>
-              Corr. Impact (0–2)
-              <input id="correlationImpact" type="number" min="0" max="2" step="0.05" value="0.6" />
-            </label>
-          </div>
-          <label>
-            Recenter Trigger (% of width)
-            <input id="recenterTriggerPct" type="number" min="10" max="200" step="5" value="75" />
-          </label>
-          <label class="checkbox-label">
-            <input id="pauseHighVol" type="checkbox" />
-            Pause swaps during HIGH-volume hours
-          </label>
-          <p class="hint">
-            <b>Impact 0.6</b>: width grows by 60% when corr = 0 (fully uncorrelated).<br/>
-            <b>Trigger 75%</b>: recenter when drift ≥ 75% of current half-width.
-            Each recenter executes a real market rebalancing trade.
-          </p>
-        </section>
+    <section class="panel">
+      <h2>Dynamic Correlation &amp; Recentering</h2>
+      <div class="two-col">
+        <label>Corr Lookback (hrs)<input id="corrLookbackHours" type="number" min="2" step="1" value="24"/></label>
+        <label>Corr Impact (0–2)<input id="correlationImpact" type="number" min="0" max="2" step="0.05" value="0.6"/></label>
+      </div>
+      <label>Recenter Trigger (% of width)
+        <input id="recenterTriggerPct" type="number" min="10" max="200" step="5" value="100"/>
+      </label>
+      <label class="checkbox-label">
+        <input id="recenterEnabled" type="checkbox" checked/>
+        Enable recentering (executes a real rebalance trade)
+      </label>
+      <label class="checkbox-label">
+        <input id="pauseHighVol" type="checkbox"/>
+        Pause swaps in HIGH-volume hours
+      </label>
+      <p class="hint">
+        When price drifts outside the range, a real market rebalancing trade
+        is placed (brokerage charged). If recentering is disabled, the pool
+        simply pauses until price returns to the band.
+      </p>
+    </section>
 
-        <!-- Volume regime -->
-        <section class="panel">
-          <h2>Volume Regime Detector</h2>
-          <div class="two-col">
-            <label>
-              Sigma (σ)
-              <input id="sigmaThreshold" type="number" min="0.1" step="0.1" value="1" />
-            </label>
-            <label>
-              Lookback (hrs)
-              <input id="lookbackHours" type="number" min="2" step="1" value="24" />
-            </label>
-          </div>
-          <p class="hint">Hourly volume vs rolling mean ± σ·σ classifies LOW / MID / HIGH.</p>
-        </section>
+    <section class="panel">
+      <h2>Volume Regime</h2>
+      <div class="two-col">
+        <label>Sigma (σ)<input id="sigmaThreshold" type="number" min="0.1" step="0.1" value="1"/></label>
+        <label>Lookback (hrs)<input id="lookbackHours" type="number" min="2" step="1" value="24"/></label>
+      </div>
+      <p class="hint">Classifies each hour as LOW/MID/HIGH by comparing volume to rolling mean ± σ·SD.</p>
+    </section>
 
-        <!-- CSV format -->
-        <section class="panel small">
-          <h2>CSV Format Required</h2>
-          <ul>
-            <li><code>date</code> — ISO timestamp e.g. <code>2025-01-01 09:15:00+05:30</code></li>
-            <li><code>close</code> — price in ₹ (no commas)</li>
-            <li><code>volume</code> — trade volume</li>
-            <li>1-minute bars are merged to hourly automatically</li>
-          </ul>
-        </section>
-      </aside>
+    <section class="panel small">
+      <h2>CSV Format</h2>
+      <ul>
+        <li><code>date</code> — e.g. <code>2025-01-01 09:15:00+05:30</code></li>
+        <li><code>close</code> — price in ₹</li>
+        <li><code>volume</code> — trade volume</li>
+        <li>1-minute bars merged to hourly automatically</li>
+      </ul>
+    </section>
+  </aside>
 
-      <!-- ── Content ────────────────────────────────────────────── -->
-      <section class="content">
+  <!-- ── Content ────────────────────────────────────────────────── -->
+  <section class="content">
 
-        <div id="statusBanner" class="status-banner info">
-          <strong>INFO:</strong>
-          <span>Upload both 1-minute CSV datasets and click Run Simulation.</span>
-        </div>
+    <div id="statusBanner" class="status-banner info">
+      <strong>INFO:</strong> <span>Upload both 1-minute CSV files and click Run Simulation.</span>
+    </div>
+    <div id="ilBanner" class="il-banner hidden"></div>
 
-        <div id="ilBanner" class="il-banner hidden"></div>
+    <!-- Metrics -->
+    <div class="panel">
+      <div class="panel-header">
+        <div><p class="eyebrow">Simulation Results</p><h2 id="pairHeading">Reliance ↔ Kotak Bank</h2></div>
+        <button id="downloadCsv" class="secondary-button hidden">⬇ Download CSV</button>
+      </div>
+      <div id="metricsGrid" class="metric-grid">
+        <div class="empty-state"><h3>No results yet</h3><p>Upload CSVs and run.</p></div>
+      </div>
+    </div>
 
-        <!-- Metrics -->
-        <div class="panel">
-          <div class="panel-header">
-            <div>
-              <p class="eyebrow">Simulation Results</p>
-              <h2 id="pairHeading">Reliance ↔ Kotak Bank</h2>
-            </div>
-            <button id="downloadCsv" class="secondary-button hidden">⬇ Download CSV</button>
-          </div>
-          <div id="metricsGrid" class="metric-grid">
-            <div class="empty-state">
-              <h3>No results yet</h3>
-              <p>Upload two CSV files and run the simulation.</p>
-            </div>
-          </div>
-        </div>
+    <!-- Mechanic explainer -->
+    <div class="panel explainer">
+      <p class="eyebrow">How each swap is executed (NSE market orders)</p>
+      <div class="explainer-grid">
+        <div class="explainer-step"><span class="step-num">1</span><div>
+          <strong>Price ratio shifts</strong>
+          <p>External p1/p2 diverges from pool's internal y/x. This creates an arbitrage opportunity in the pool.</p>
+        </div></div>
+        <div class="explainer-step"><span class="step-num">2</span><div>
+          <strong>Buy input asset (whole shares) from NSE</strong>
+          <p>Place market buy order. Qty = ⌊AMM delta⌋ integer shares. Cost = Qty × market price. Buy brokerage charged.</p>
+        </div></div>
+        <div class="explainer-step"><span class="step-num">3</span><div>
+          <strong>AMM releases output asset (x·y=k law)</strong>
+          <p>Pool absorbs the input. Constant-product equation yields exact integer output shares. Pool inventory updated.</p>
+        </div></div>
+        <div class="explainer-step"><span class="step-num">4</span><div>
+          <strong>Sell output asset to NSE, bank net profit</strong>
+          <p>Market sell order. Revenue = shares × price. Sell brokerage deducted. Net profit banked only if &gt; 0.</p>
+        </div></div>
+      </div>
+    </div>
 
-        <!-- Trade mechanics explainer -->
-        <div class="panel explainer">
-          <p class="eyebrow">How each swap works (real NSE execution)</p>
-          <div class="explainer-grid">
-            <div class="explainer-step">
-              <span class="step-num">1</span>
-              <div>
-                <strong>Price ratio shifts</strong>
-                <p>Asset1/Asset2 price ratio moves. AMM equation determines new required inventory at the new price within the concentration range.</p>
-              </div>
-            </div>
-            <div class="explainer-step">
-              <span class="step-num">2</span>
-              <div>
-                <strong>BUY the underweighted stock (whole shares)</strong>
-                <p>Place a market buy order on NSE. Quantity = ⌊AMM delta⌋ (integer). Cost = shares × market price. Buy brokerage deducted.</p>
-              </div>
-            </div>
-            <div class="explainer-step">
-              <span class="step-num">3</span>
-              <div>
-                <strong>SELL the overweighted stock (whole shares)</strong>
-                <p>AMM releases ⌊delta⌋ whole shares. Market sell order placed simultaneously. Revenue = shares × market price. Sell brokerage deducted.</p>
-              </div>
-            </div>
-            <div class="explainer-step">
-              <span class="step-num">4</span>
-              <div>
-                <strong>Net profit banked only if &gt; 0</strong>
-                <p>Gross = revenue − cost. Net = gross − buy brokerage − sell brokerage. Trade aborted if net ≤ 0. Fractional share dust is discarded.</p>
-              </div>
-            </div>
-          </div>
-        </div>
+    <!-- Equity chart -->
+    <div class="panel">
+      <div class="panel-header"><div>
+        <p class="eyebrow">Performance</p>
+        <h2>AMM Total Value vs Buy-and-Hold vs Cash Profit</h2>
+      </div></div>
+      <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
+    </div>
 
-        <!-- Equity chart -->
-        <div class="panel">
-          <div class="panel-header">
-            <div><p class="eyebrow">Performance Chart</p><h2>AMM Total Value vs Buy-and-Hold vs Cash Profit</h2></div>
-          </div>
-          <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
-        </div>
+    <!-- Params chart -->
+    <div class="panel">
+      <div class="panel-header"><div>
+        <p class="eyebrow">Dynamic Parameters</p>
+        <h2>Rolling Correlation · Dynamic Width · IL %</h2>
+      </div></div>
+      <div class="chart-wrap"><canvas id="corrChart"></canvas></div>
+    </div>
 
-        <!-- Params chart -->
-        <div class="panel">
-          <div class="panel-header">
-            <div><p class="eyebrow">Dynamic Parameters</p><h2>Correlation · Range Width · Impermanent Loss %</h2></div>
-          </div>
-          <div class="chart-wrap"><canvas id="corrChart"></canvas></div>
-        </div>
+    <!-- Swap table -->
+    <div class="panel">
+      <div class="panel-header">
+        <div><p class="eyebrow">Trade History</p><h2>Every swap &amp; recenter executed</h2></div>
+        <span id="swapCount" class="pill hidden"></span>
+      </div>
+      <div id="swapTableContainer">
+        <div class="empty-state compact"><h3>No trades yet</h3><p>Run the simulation.</p></div>
+      </div>
+    </div>
 
-        <!-- Swap table -->
-        <div class="panel">
-          <div class="panel-header">
-            <div><p class="eyebrow">Trade History</p><h2>Every swap &amp; recenter trade executed</h2></div>
-            <span id="swapCount" class="pill hidden"></span>
-          </div>
-          <div id="swapTableContainer">
-            <div class="empty-state compact">
-              <h3>No trades yet</h3>
-              <p>Run the simulation to see trade-by-trade records.</p>
-            </div>
-          </div>
-        </div>
-
-      </section>
-    </main>
-    <script type="module" src="/app.js"></script>
-  </body>
+  </section>
+</main>
+<script type="module" src="/app.js"></script>
+</body>
 </html>

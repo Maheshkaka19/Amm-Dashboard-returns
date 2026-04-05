@@ -1,59 +1,68 @@
-// simulation-core.js — AMM Volatility Harvesting Backtester v4
-// Institutional-grade. All quantities are whole shares (NSE rules).
+// simulation-core.js  — AMM Volatility Harvesting Backtester v5
 // ═══════════════════════════════════════════════════════════════════════════════
 //
-// TRADE MECHANICS (Indian stock market):
-//   Stocks cannot be transferred between demats in fractions of seconds,
-//   so each AMM rebalance is simulated as two simultaneous market orders:
+//  POOL MODEL: simple constant-product  x · y = k
+//  (NOT Uniswap V3 concentrated liquidity — this is a self-managed pool)
 //
-//   SCENARIO A — ratio moved so AMM needs more X, less Y:
-//     Step 1: BUY  boughtQty (whole) of Asset1 from NSE   → cost  = boughtQty × p1
-//     Step 2: AMM releases soldQty  (whole) of Asset2      → rev   = soldQty  × p2
-//     Gross profit  = rev − cost
-//     Brokerage buy = buyBrokerPct  × cost
-//     Brokerage sell= sellBrokerPct × rev
-//     Net profit    = gross − brokerage_buy − brokerage_sell
-//     ONLY execute if net profit > 0 AND both quantities ≥ 1
+//  TRADE MECHANICS — exactly as described:
+//    Each hour the external market moves, shifting p1/p2.
+//    The pool's internal "fair price" is  p_pool = y/x  (Asset2 per Asset1).
+//    When the external ratio diverges from the pool ratio, an arbitrage swap
+//    is available.  We simulate it with two simultaneous NSE market orders:
 //
-//   SCENARIO B — ratio moved so AMM needs more Y, less X:
-//     Step 1: BUY  boughtQty (whole) of Asset2 from NSE   → cost  = boughtQty × p2
-//     Step 2: AMM releases soldQty  (whole) of Asset1      → rev   = soldQty  × p1
-//     same profit formula
+//    CASE A — external p1 rose relative to p2  (pool has "too much" Asset1):
+//      1. BUY  Δx whole shares of Asset1 from NSE market   cost  = Δx · p1
+//      2. Pool now has (x+Δx) Asset1; AMM gives back Δy Asset2
+//         where Δy = y − k/(x+Δx)                (constant-product law)
+//      3. SELL Δy whole shares of Asset2 to NSE market      rev   = Δy · p2
+//      Profit = rev − cost − brok_buy − brok_sell
+//      Execute only if profit > 0
 //
-// WHOLE-UNIT ENFORCEMENT:
-//   Quantities are floored to integers BEFORE any P&L calculation.
-//   Leftover fractional "dust" is DISCARDED (not banked), preventing
-//   compounding leakage over hundreds of hours.
-//   The pool tracks integer shares; the invariant L is re-derived
-//   from the actual integer holdings after each trade.
+//    CASE B — external p2 rose relative to p1  (pool has "too much" Asset2):
+//      1. BUY  Δy whole shares of Asset2 from NSE market   cost  = Δy · p2
+//      2. Pool now has (y+Δy) Asset2; AMM gives back Δx Asset1
+//         where Δx = x − k/(y+Δy)                (constant-product law)
+//      3. SELL Δx whole shares of Asset1 to NSE market      rev   = Δx · p1
+//      Profit = rev − cost − brok_buy − brok_sell
+//      Execute only if profit > 0
 //
-// RECENTERING — REAL MARKET REBALANCE COST:
-//   When recentering, the required x/y ratio for the new range differs from
-//   what you currently hold. In real life you must sell one asset and buy the
-//   other to hit the new ratio. This rebalancing trade is executed at market
-//   price and brokerage is charged. The new L is derived from the adjusted
-//   integer holdings, not from a hypothetical lossless teleport.
+//  CONCENTRATED RANGE:
+//    We only trade while the price ratio stays within ±width% of the center.
+//    Outside the range we pause (or recenter if enabled).
+//    This is modelled as a GATE — not V3 math — because V3 is for permissionless
+//    pools.  In our self-managed pool the concentration is a policy decision.
 //
-// IL STOP-LOSS:
-//   If (poolAssetValue / holdValue − 1) < −ilStopLossPct%, all swaps halt.
+//  RECENTERING:
+//    When price drifts beyond the range, optionally recenter at a cost:
+//    The pool's x/y ratio must match the new center price, so we execute
+//    one rebalancing market trade (buy the deficit asset, sell the excess).
+//    Brokerage is charged on this rebalancing trade too.
 //
-// DUST CONTROL:
-//   After every trade the pool stores only floor(x) and floor(y).
-//   Fractional remainders are not tracked — they represent sub-share
-//   quantities that NSE cannot execute.
+//  INVENTORY ACCOUNTING  (no leakages):
+//    • Pool holds only INTEGER shares (floor at purchase).
+//    • After buying Δx and releasing Δy, we update:
+//        x_new = x + Δx_floor
+//        y_new = y − Δy_floor   (Δy derived from constant-product with integer Δx)
+//        k_new = x_new · y_new  (k is re-derived, not assumed constant)
+//    • The tiny mismatch from integer rounding is absorbed into k, not into
+//      phantom cash. This is the correct approach for a discrete pool.
+//
+//  IL CALCULATION:
+//    IL% = (poolAssetValue / holdValue − 1) × 100
+//    where holdValue = xInit · p1 + yInit · p2 (buy-and-hold baseline)
+//    This is pure IL from the AMM rebalancing, separate from cash profit.
+//
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export function splitCsvLine(line) {
-  const cells = [];
-  let cur = '', q = false;
+  const cells = []; let cur = '', q = false;
   for (let i = 0; i < line.length; i++) {
     const c = line[i];
-    if (c === '"') { if (q && line[i+1] === '"') { cur += '"'; i++; } else { q = !q; } }
+    if (c === '"') { if (q && line[i+1] === '"') { cur += '"'; i++; } else q = !q; }
     else if (c === ',' && !q) { cells.push(cur); cur = ''; }
-    else { cur += c; }
+    else cur += c;
   }
-  cells.push(cur);
-  return cells;
+  cells.push(cur); return cells;
 }
 
 export function parseCsv(text) {
@@ -68,559 +77,381 @@ export function parseCsv(text) {
 
 export function normalizeRows(rows) {
   return rows
-    .map(row => ({ date: new Date(row.date), close: Number(row.close), volume: Number(row.volume) }))
-    .filter(row => !isNaN(row.date) && isFinite(row.close) && row.close > 0 && isFinite(row.volume))
+    .map(r => ({ date: new Date(r.date), close: +r.close, volume: +r.volume }))
+    .filter(r => !isNaN(r.date) && isFinite(r.close) && r.close > 0 && isFinite(r.volume))
     .sort((a, b) => a.date - b.date);
 }
 
-// ─── Statistics ───────────────────────────────────────────────────────────────
-
-function mean(arr) { return arr.length ? arr.reduce((s,v) => s+v, 0)/arr.length : 0; }
-
-function stdDev(arr, avg) {
-  if (arr.length < 2) return 0;
-  return Math.sqrt(arr.reduce((s,v) => s + (v-avg)**2, 0) / arr.length);
+// ─── Stats ────────────────────────────────────────────────────────────────────
+function mean(a) { return a.length ? a.reduce((s,v)=>s+v,0)/a.length : 0; }
+function stdDev(a, m) {
+  if (a.length < 2) return 0;
+  return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/a.length);
 }
-
 function pearsonCorr(a, b) {
   if (a.length < 2 || a.length !== b.length) return 0;
-  const ma = mean(a), mb = mean(b);
-  let num = 0, va = 0, vb = 0;
-  for (let i = 0; i < a.length; i++) {
-    const da = a[i]-ma, db = b[i]-mb;
-    num += da*db; va += da*da; vb += db*db;
-  }
-  const denom = Math.sqrt(va*vb);
-  return denom > 0 ? num/denom : 0;
+  const ma=mean(a), mb=mean(b);
+  let n=0,va=0,vb=0;
+  for (let i=0;i<a.length;i++){const da=a[i]-ma,db=b[i]-mb;n+=da*db;va+=da*da;vb+=db*db;}
+  const d=Math.sqrt(va*vb); return d>0?n/d:0;
 }
+function clamp(v,lo,hi){return Math.min(hi,Math.max(lo,v));}
 
-function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+// ─── 1-minute → hourly ───────────────────────────────────────────────────────
+function hourKey(date){const d=new Date(date);d.setMinutes(0,0,0);return d.toISOString();}
 
-// ─── 1-minute → hourly merge ──────────────────────────────────────────────────
-
-function hourKey(date) { const d = new Date(date); d.setMinutes(0,0,0); return d.toISOString(); }
-
-function mergeMinutely(a1, a2) {
-  const merged = [];
-  let i = 0, j = 0;
-  while (i < a1.length && j < a2.length) {
-    const t1 = a1[i].date.getTime(), t2 = a2[j].date.getTime();
-    if (t1 === t2) { merged.push({ date: a1[i].date, c1: a1[i].close, c2: a2[j].close, v1: a1[i].volume, v2: a2[j].volume }); i++; j++; }
-    else if (t1 < t2) i++; else j++;
-  }
-  return merged;
-}
-
-function toHourly(merged) {
+function mergeAndBucket(a1, a2) {
+  // merge on exact timestamp, then bucket to hourly last-close
   const map = new Map();
-  for (const row of merged) {
-    const key = hourKey(row.date);
-    if (!map.has(key)) map.set(key, { date: new Date(key), c1: row.c1, c2: row.c2, vol: 0 });
-    const b = map.get(key);
-    b.c1 = row.c1; b.c2 = row.c2; b.vol += row.v1 + row.v2; // last close of hour
+  let i=0, j=0;
+  while (i<a1.length && j<a2.length) {
+    const t1=a1[i].date.getTime(), t2=a2[j].date.getTime();
+    if (t1===t2) {
+      const key = hourKey(a1[i].date);
+      if (!map.has(key)) map.set(key, {date:new Date(key),c1:a1[i].close,c2:a2[j].close,vol:0});
+      const b=map.get(key);
+      b.c1=a1[i].close; b.c2=a2[j].close; b.vol+=a1[i].volume+a2[j].volume;
+      i++; j++;
+    } else if (t1<t2) i++; else j++;
   }
-  const arr = [...map.values()].sort((a,b) => a.date - b.date);
-  for (let k = 0; k < arr.length; k++) {
-    arr[k].ret1 = k === 0 ? 0 : arr[k].c1/arr[k-1].c1 - 1;
-    arr[k].ret2 = k === 0 ? 0 : arr[k].c2/arr[k-1].c2 - 1;
+  const arr=[...map.values()].sort((a,b)=>a.date-b.date);
+  for (let k=0;k<arr.length;k++){
+    arr[k].ret1 = k===0?0:arr[k].c1/arr[k-1].c1-1;
+    arr[k].ret2 = k===0?0:arr[k].c2/arr[k-1].c2-1;
   }
   return arr;
 }
 
 // ─── Volume regime ────────────────────────────────────────────────────────────
-
 function volMode(vol, win, sigma) {
   if (!win.length) return 'MID';
-  const avg = mean(win), sd = stdDev(win, avg), band = sigma * sd;
-  if (vol < avg - band) return 'LOW';
-  if (vol > avg + band) return 'HIGH';
+  const avg=mean(win), sd=stdDev(win,avg), band=sigma*sd;
+  if (vol < avg-band) return 'LOW';
+  if (vol > avg+band) return 'HIGH';
   return 'MID';
 }
 
-// ─── Uniswap V3 concentrated liquidity math ───────────────────────────────────
+// ─── Core AMM math (constant product x·y=k) ──────────────────────────────────
 //
-// Price ratio p = p1/p2  (how many units of Asset2 equal 1 unit of Asset1)
-// Active range [pa, pb] symmetric around center price ratio.
+// Given current pool (x, y) with k = x·y:
+// External prices p1 (Asset1), p2 (Asset2).
 //
-// Given liquidity constant L:
-//   x(p) = L · (1/√p  − 1/√pb)    ← Asset1 inventory at price p
-//   y(p) = L · (√p    − √pa )     ← Asset2 inventory at price p
+// Target pool state where internal price matches external:
+//   y_new/x_new = p1/p2   and   x_new·y_new = k
+//   ⟹  x_new = sqrt(k·p2/p1)
+//       y_new = sqrt(k·p1/p2)
 //
-// We re-derive L from the actual integer pool holdings after each trade.
-// This prevents the "ghost liquidity" bug where non-integer holding assumptions
-// silently diverge from the integer-constrained real portfolio.
+// This gives the CONTINUOUS target.  We then floor to integers and
+// apply the constant-product law to get the exact integer Δ:
+//
+//  If x_new > x  (need more Asset1 in pool):
+//    Δx_buy = floor(x_new - x)                   ← buy this from market
+//    x_after = x + Δx_buy                         ← pool absorbs
+//    Δy_out  = floor(y - k / x_after)             ← pool releases this (law)
+//    y_after = y - Δy_out
+//
+//  If x_new < x  (need less Asset1 in pool):
+//    Δy_buy = floor(y_new - y)                    ← buy Asset2 from market
+//    y_after = y + Δy_buy                          ← pool absorbs
+//    Δx_out  = floor(x - k / y_after)             ← pool releases Asset1
+//    x_after = x - Δx_out
 
-function xFromL(L, p, pa, pb) {
-  if (p <= pa) return L * (1/Math.sqrt(pa) - 1/Math.sqrt(pb));
-  if (p >= pb) return 0;
-  return L * (1/Math.sqrt(p) - 1/Math.sqrt(pb));
-}
+function computeSwap(x, y, p1, p2) {
+  const k = x * y;
+  const xTarget = Math.sqrt(k * p2 / p1);
+  const yTarget = Math.sqrt(k * p1 / p2);
+  const dx = xTarget - x;  // + → buy Asset1; − → sell Asset1
+  const dy = yTarget - y;  // opposite sign of dx
 
-function yFromL(L, p, pa, pb) {
-  if (p <= pa) return 0;
-  if (p >= pb) return L * (Math.sqrt(pb) - Math.sqrt(pa));
-  return L * (Math.sqrt(p) - Math.sqrt(pa));
-}
+  if (dx >= 0.5 && dy <= -0.5) {
+    // CASE A: Buy Asset1 (Δx), AMM releases Asset2 (Δy)
+    const dxBuy = Math.floor(dx);                       // integer shares to buy
+    if (dxBuy < 1) return null;
+    const xAfter = x + dxBuy;
+    const dyOut  = Math.floor(y - k / xAfter);         // integer shares released
+    if (dyOut < 1) return null;
+    const yAfter = y - dyOut;
+    return {
+      direction: 'BUY1_SELL2',
+      dxBuy, dyOut,
+      xAfter, yAfter,
+      cost:    dxBuy * p1,
+      revenue: dyOut * p2,
+    };
+  }
 
-function lFromXY(x, y, p, pa, pb) {
-  // Derives L that is consistent with both integer holdings at price p within [pa,pb]
-  const sp = Math.sqrt(p), spa = Math.sqrt(pa), spb = Math.sqrt(pb);
-  const lx = (1/sp - 1/spb) > 1e-14 ? x / (1/sp - 1/spb) : Infinity;
-  const ly = (sp  - spa    ) > 1e-14 ? y / (sp  - spa)     : Infinity;
-  // Use the binding constraint (smaller L) to avoid over-representing inventory
-  return Math.min(lx, ly);
-}
+  if (dy >= 0.5 && dx <= -0.5) {
+    // CASE B: Buy Asset2 (Δy), AMM releases Asset1 (Δx)
+    const dyBuy = Math.floor(dy);                       // integer shares to buy
+    if (dyBuy < 1) return null;
+    const yAfter = y + dyBuy;
+    const dxOut  = Math.floor(x - k / yAfter);         // integer shares released
+    if (dxOut < 1) return null;
+    const xAfter = x - dxOut;
+    return {
+      direction: 'BUY2_SELL1',
+      dyBuy, dxOut,
+      xAfter, yAfter,
+      cost:    dyBuy * p2,
+      revenue: dxOut * p1,
+    };
+  }
 
-// ─── Target ratio helper (for recentering rebalance) ─────────────────────────
-// At the center of a new range [pa_new, pb_new] at price p:
-//   x_target / y_target = (1/√p − 1/√pb) / (√p − √pa) × (p2/p1)
-// We use this to determine how to rebalance existing stock before locking in L.
-
-function targetXYRatio(p, pa, pb) {
-  // returns x/y ratio (in share counts) at center of range
-  const sp = Math.sqrt(p), spa = Math.sqrt(pa), spb = Math.sqrt(pb);
-  const xFactor = 1/sp - 1/spb;   // proportional to x
-  const yFactor = sp - spa;        // proportional to y
-  return (yFactor > 1e-14 && xFactor > 1e-14) ? xFactor/yFactor : null;
+  return null; // price move too small for integer trade
 }
 
 // ─── Main simulation ──────────────────────────────────────────────────────────
-
 export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   const asset1 = normalizeRows(df1);
   const asset2 = normalizeRows(df2);
-
   if (!asset1.length || !asset2.length)
     return { error: 'Both CSV files must contain valid date, close, and volume columns.' };
 
-  const merged = mergeMinutely(asset1, asset2);
-  if (!merged.length)
-    return { error: 'No overlapping timestamps found. Confirm both CSVs cover the same trading period.' };
-
-  const hourly = toHourly(merged);
+  const hourly = mergeAndBucket(asset1, asset2);
   if (hourly.length < 2)
-    return { error: 'Need at least 2 hourly buckets after preprocessing.' };
+    return { error: 'No overlapping timestamps found, or fewer than 2 hourly buckets. Check that both CSVs cover the same trading period.' };
 
   // ── Config ──────────────────────────────────────────────────────────────────
-  const lowW         = clamp(Number(config.lowWidth          ?? 0.75), 0.05, 50) / 100;
-  const midW         = clamp(Number(config.midWidth          ?? 2),    0.05, 50) / 100;
-  const highW        = clamp(Number(config.highWidth         ?? 5),    0.05, 50) / 100;
-  const sigmaT       = Number(config.sigmaThreshold          ?? 1);
-  const lookbackH    = Math.max(2, Number(config.lookbackHours       ?? 24));
-  const corrLB       = Math.max(2, Number(config.corrLookbackHours   ?? 24));
-  const corrImpact   = clamp(Number(config.correlationImpact ?? 0.6), 0, 2);
-  const recTrigF     = clamp(Number(config.recenterTriggerPct ?? 75) / 100, 0.05, 2);
-  // Brokerage: separate buy-side and sell-side rates (default 0.15% each = 0.30% total)
-  const buyBrokerPct  = clamp(Number(config.buyBrokeragePct  ?? 0.15), 0, 5) / 100;
-  const sellBrokerPct = clamp(Number(config.sellBrokeragePct ?? 0.15), 0, 5) / 100;
-  const pauseHigh    = Boolean(config.pauseHighVol           ?? false);
-  const ilStopLossPct = clamp(Number(config.ilStopLossPct   ?? 0), 0, 100); // in percent
+  const lowW          = clamp(+( config.lowWidth          ?? 0.75), 0.05, 50) / 100;
+  const midW          = clamp(+( config.midWidth          ?? 2),    0.05, 50) / 100;
+  const highW         = clamp(+( config.highWidth         ?? 5),    0.05, 50) / 100;
+  const sigmaT        = +( config.sigmaThreshold           ?? 1);
+  const lookbackH     = Math.max(2, +( config.lookbackHours        ?? 24));
+  const corrLB        = Math.max(2, +( config.corrLookbackHours    ?? 24));
+  const corrImpact    = clamp(+( config.correlationImpact  ?? 0.6), 0, 2);
+  const recTrigF      = clamp(+( config.recenterTriggerPct ?? 75) / 100, 0.05, 2);
+  const buyBrok       = clamp(+( config.buyBrokeragePct    ?? 0.15), 0, 5) / 100;
+  const sellBrok      = clamp(+( config.sellBrokeragePct   ?? 0.15), 0, 5) / 100;
+  const pauseHigh     = !!config.pauseHighVol;
+  const ilStopLoss    = clamp(+( config.ilStopLossPct      ?? 0), 0, 100); // %
+  const recenterOn    = config.recenterEnabled !== false; // default true
 
-  // ── Initial pool setup ──────────────────────────────────────────────────────
-  const h0 = hourly[0];
-  const p0 = h0.c1 / h0.c2;  // initial price ratio
+  // ── Pool initialisation ──────────────────────────────────────────────────────
+  const h0   = hourly[0];
+  const p1_0 = h0.c1, p2_0 = h0.c2;
 
-  let centerP   = p0;
-  let rangeHalf = midW;
-  let pa = centerP * (1 - rangeHalf);
-  let pb = centerP * (1 + rangeHalf);
-
-  // Whole-share initial allocation (floor to integer — dust discarded)
-  const halfCap = realCapital / 2;
-  const xInit   = Math.floor(halfCap / h0.c1);  // integer Asset1 shares
-  const yInit   = Math.floor(halfCap / h0.c2);  // integer Asset2 shares
-
+  // Integer share allocation — floor to avoid sub-share purchases
+  const xInit = Math.floor(realCapital / 2 / p1_0);
+  const yInit = Math.floor(realCapital / 2 / p2_0);
   if (xInit < 1 || yInit < 1)
-    return { error: 'Capital too low: cannot purchase even 1 share of each asset.' };
+    return { error: 'Capital too low: cannot purchase even 1 whole share of each asset.' };
 
-  // Derive L from actual integer holdings (not theoretical fractional amounts)
-  let L = lFromXY(xInit, yInit, p0, pa, pb);
+  let x = xInit, y = yInit;      // pool inventory (always integers)
+  let k = x * y;                  // constant product (re-derived after each trade)
 
-  let poolX = xInit;   // always integers
-  let poolY = yInit;   // always integers
+  // Initial center ratio and range
+  let centerRatio = p1_0 / p2_0;  // in (Asset2 per Asset1) terms
+  let curWidth    = midW;          // current half-width fraction
 
-  // Cash account: net profit from all profitable swaps
+  // Running totals
   let cashProfit     = 0;
   let totalBrokerage = 0;
+  let totalSwaps     = 0;
   let recenterCount  = 0;
+  let recenterSwaps  = 0;
   let ilHalted       = false;
   let ilHaltedAt     = null;
   let currentMode    = 'MID';
   const modeHours    = { LOW: 0, MID: 0, HIGH: 0 };
 
-  // Track actual cash spent on initial stock purchase (for true ROI)
-  const initCashDeployed = xInit * h0.c1 + yInit * h0.c2;
-
-  const swapRecords  = [];
-  const equityCurve  = [];
+  const initCashDeployed = xInit * p1_0 + yInit * p2_0;
+  const swapRecords = [];
+  const equityCurve = [];
 
   equityCurve.push({
-    date:            h0.date.toISOString(),
-    poolValue:       initCashDeployed,
-    holdValue:       initCashDeployed,
-    cashProfit:      0,
-    ilPct:           0,
-    correlation:     0,
-    dynamicWidthPct: rangeHalf * 100,
-    mode:            'MID',
-    halted:          false,
+    date: h0.date.toISOString(), poolValue: initCashDeployed,
+    holdValue: initCashDeployed, cashProfit: 0, ilPct: 0,
+    correlation: 0, dynamicWidthPct: curWidth * 100, mode: 'MID', halted: false,
   });
 
-  // ── Hour-by-hour loop ───────────────────────────────────────────────────────
+  // ── Hour loop ─────────────────────────────────────────────────────────────────
   for (let idx = 1; idx < hourly.length; idx++) {
     const row = hourly[idx];
-    const p1  = row.c1;   // Asset1 price ₹
-    const p2  = row.c2;   // Asset2 price ₹
-    const p   = p1 / p2;  // current price ratio
+    const p1  = row.c1, p2 = row.c2;
+    const extRatio = p1 / p2;   // external price ratio (Asset2 per Asset1... wait:
+    // p1 is Asset1 price in ₹, p2 is Asset2 price in ₹
+    // extRatio = p1/p2 means "how many Asset2 units equal 1 Asset1 unit in value"
+    // This is NOT the same as the pool's y/x ratio.
+    // Pool internal price: 1 Asset1 costs y/x Asset2 shares
+    // External price: 1 Asset1 worth (p1/p2) Asset2 shares ✓
 
     // 1. Volume regime
-    const volWin = hourly.slice(Math.max(0, idx - lookbackH), idx).map(h => h.vol);
+    const volWin = hourly.slice(Math.max(0,idx-lookbackH), idx).map(h=>h.vol);
     currentMode = volMode(row.vol, volWin, sigmaT);
     modeHours[currentMode]++;
 
-    // 2. Rolling correlation of hourly returns
-    const corrWin = hourly.slice(Math.max(0, idx - corrLB), idx);
-    const corr = pearsonCorr(corrWin.map(h => h.ret1), corrWin.map(h => h.ret2));
+    // 2. Rolling correlation
+    const corrWin = hourly.slice(Math.max(0,idx-corrLB), idx);
+    const corr = pearsonCorr(corrWin.map(h=>h.ret1), corrWin.map(h=>h.ret2));
 
-    // 3. Dynamic width: lower corr → wider (assets diverge → keep both in range)
-    const baseW = currentMode === 'LOW' ? lowW : currentMode === 'HIGH' ? highW : midW;
-    const dynW  = clamp(baseW * (1 + corrImpact * (1 - Math.abs(corr))), lowW * 0.4, highW * 3);
+    // 3. Dynamic width (correlation-adjusted)
+    //    Low corr → stocks diverge more → widen range
+    //    High corr → move together → tighten
+    const baseW = currentMode==='LOW' ? lowW : currentMode==='HIGH' ? highW : midW;
+    const dynW  = clamp(baseW * (1 + corrImpact*(1-Math.abs(corr))), lowW*0.4, highW*3);
+    curWidth    = dynW;
 
-    // 4. Should we recenter?
-    const drift    = Math.abs(p / centerP - 1);
-    const recThresh = dynW * recTrigF;
-    const doRecenter = drift >= recThresh && !ilHalted && !(pauseHigh && currentMode === 'HIGH');
+    // 4. Check if price is within active range
+    const drift    = Math.abs(extRatio / centerRatio - 1);
+    const rangeMax = dynW * recTrigF;   // fraction of half-width before recenter
+    const inRange  = drift <= dynW;     // within the concentration band
 
-    // ── RECENTERING — REAL MARKET REBALANCE ──────────────────────────────────
-    // Changing the range means the required x/y ratio changes.
-    // We must execute a real stock trade to match the new ratio at the new center.
-    // This is NOT free — brokerage applies.
-    if (doRecenter) {
-      const newPa = p * (1 - dynW);
-      const newPb = p * (1 + dynW);
+    // ── 4a. Handle out-of-range (recenter or skip) ───────────────────────────
+    let didRecenter = false;
 
-      // Required x/y ratio at center of new range
-      const ratio = targetXYRatio(p, newPa, newPb);
+    if (!inRange && !ilHalted) {
+      if (recenterOn && !(pauseHigh && currentMode === 'HIGH')) {
+        // Rebalance pool to match new center (p1_new/p2_new = extRatio)
+        // Target: y_new/x_new = p1/p2, x_new*y_new = k
+        const xTarget_f = Math.sqrt(k * p2 / p1);
+        const yTarget_f = Math.sqrt(k * p1 / p2);
+        const dx = xTarget_f - x;
+        const dy = yTarget_f - y;
 
-      if (ratio !== null) {
-        // Current portfolio value in ₹
-        const portfolioValue = poolX * p1 + poolY * p2;
-
-        // New target: x_new = ratio * y_new, and x_new*p1 + y_new*p2 = portfolioValue (pre-cost)
-        // → y_new = portfolioValue / (ratio*p1 + p2)
-        const yNew_f = portfolioValue / (ratio * p1 + p2);
-        const xNew_f = ratio * yNew_f;
-
-        // Floor to whole shares
-        const xNew = Math.max(0, Math.floor(xNew_f));
-        const yNew = Math.max(0, Math.floor(yNew_f));
-
-        // Rebalancing deltas
-        const sellX = poolX - xNew;   // > 0 means sell Asset1
-        const buyX  = xNew - poolX;   // > 0 means buy  Asset1
-        const sellY = poolY - yNew;   // > 0 means sell Asset2
-        const buyY  = yNew - poolY;   // > 0 means buy  Asset2
-
-        // Exactly one of (sellX, buyX) and one of (sellY, buyY) will be positive
-        // depending on the direction of the range shift
-        let recenterBrokerage = 0;
-        let recenterProfit    = 0;
-
-        if (sellX > 0 && buyY > 0) {
-          // Sell Asset1 to buy Asset2
-          const rev  = sellX * p1;
-          const cost = buyY  * p2;
-          recenterBrokerage = sellBrokerPct * rev + buyBrokerPct * cost;
-          recenterProfit    = rev - cost - recenterBrokerage;
-          cashProfit     += recenterProfit;
-          totalBrokerage += recenterBrokerage;
-          poolX = xNew;
-          poolY = yNew;
-
-          swapRecords.push({
-            date:              row.date.toISOString(),
-            mode:              currentMode,
-            rollingCorrelation: corr,
-            dynamicWidthPct:   dynW * 100,
-            recentered:        true,
-            isRecenterTrade:   true,
-            action:            'RECENTER: Sell Asset1 / Buy Asset2',
-            boughtAsset:       'Asset 2',
-            boughtQty:         buyY,
-            boughtCost:        cost,
-            soldAsset:         'Asset 1',
-            soldQty:           sellX,
-            soldRevenue:       rev,
-            grossProfit:       rev - cost,
-            brokerageOnBuy:    buyBrokerPct * cost,
-            brokerageOnSell:   sellBrokerPct * rev,
-            totalBrokerage:    recenterBrokerage,
-            netProfit:         recenterProfit,
-            cashProfit,
-            asset1Price:       p1,
-            asset2Price:       p2,
-            priceRatio:        p,
-            centerRatio:       p,
-            poolX,
-            poolY,
-            poolAssetValue:    poolX * p1 + poolY * p2,
-            ilPct:             0,  // filled below
-            totalValue:        0,  // filled below
-          });
-
-        } else if (buyX > 0 && sellY > 0) {
-          // Buy Asset1 to sell Asset2
-          const cost = buyX  * p1;
-          const rev  = sellY * p2;
-          recenterBrokerage = buyBrokerPct * cost + sellBrokerPct * rev;
-          recenterProfit    = rev - cost - recenterBrokerage;
-          cashProfit     += recenterProfit;
-          totalBrokerage += recenterBrokerage;
-          poolX = xNew;
-          poolY = yNew;
-
-          swapRecords.push({
-            date:              row.date.toISOString(),
-            mode:              currentMode,
-            rollingCorrelation: corr,
-            dynamicWidthPct:   dynW * 100,
-            recentered:        true,
-            isRecenterTrade:   true,
-            action:            'RECENTER: Buy Asset1 / Sell Asset2',
-            boughtAsset:       'Asset 1',
-            boughtQty:         buyX,
-            boughtCost:        cost,
-            soldAsset:         'Asset 2',
-            soldQty:           sellY,
-            soldRevenue:       rev,
-            grossProfit:       rev - cost,
-            brokerageOnBuy:    buyBrokerPct * cost,
-            brokerageOnSell:   sellBrokerPct * rev,
-            totalBrokerage:    recenterBrokerage,
-            netProfit:         recenterProfit,
-            cashProfit,
-            asset1Price:       p1,
-            asset2Price:       p2,
-            priceRatio:        p,
-            centerRatio:       p,
-            poolX,
-            poolY,
-            poolAssetValue:    poolX * p1 + poolY * p2,
-            ilPct:             0,
-            totalValue:        0,
-          });
-        }
-        // If deltas are both < 1 share, no rebalance needed; just update range
-      }
-
-      // Update range
-      centerP   = p;
-      rangeHalf = dynW;
-      pa = centerP * (1 - rangeHalf);
-      pb = centerP * (1 + rangeHalf);
-
-      // Re-derive L from the NEW integer holdings within the NEW range
-      L = lFromXY(poolX, poolY, p, pa, pb);
-      recenterCount++;
-
-    } else {
-      // Not recentering — just update range width, keep center
-      rangeHalf = dynW;
-      pa = centerP * (1 - rangeHalf);
-      pb = centerP * (1 + rangeHalf);
-    }
-
-    // ── 5. AMM-dictated target inventory at current price ─────────────────────
-    const pC      = clamp(p, pa, pb);
-    const xTarget = xFromL(L, pC, pa, pb);
-    const yTarget = yFromL(L, pC, pa, pb);
-
-    // Delta in continuous space
-    const dxCont = xTarget - poolX;
-    const dyCont = yTarget - poolY;
-
-    // ── 6. Whole-share quantities (no fractions) ──────────────────────────────
-    // Floor the raw delta to whole shares.
-    // BUY side: floor the quantity we need to buy (conservative)
-    // SELL side: floor the quantity we need to sell (don't sell more than we bought)
-    let boughtQty = 0, soldQty = 0;
-    let boughtAsset = '', soldAsset = '';
-    let boughtCost = 0, soldRevenue = 0;
-
-    if (dxCont > 0 && dyCont < 0) {
-      // Need more X, less Y → BUY Asset1, SELL Asset2
-      boughtAsset = 'Asset 1'; soldAsset = 'Asset 2';
-      boughtQty   = Math.floor(dxCont);      // whole shares to buy
-      soldQty     = Math.floor(-dyCont);     // whole shares to sell
-      boughtCost  = boughtQty * p1;
-      soldRevenue = soldQty   * p2;
-    } else if (dxCont < 0 && dyCont > 0) {
-      // Need less X, more Y → SELL Asset1, BUY Asset2
-      boughtAsset = 'Asset 2'; soldAsset = 'Asset 1';
-      boughtQty   = Math.floor(dyCont);      // whole shares to buy
-      soldQty     = Math.floor(-dxCont);     // whole shares to sell
-      boughtCost  = boughtQty * p2;
-      soldRevenue = soldQty   * p1;
-    }
-
-    // ── 7. Execute only if both legs ≥ 1 share and net profit > 0 ─────────────
-    let tradeExecuted = false;
-    let grossProfit   = 0;
-    let brokerageOnBuy  = 0;
-    let brokerageOnSell = 0;
-    let brokerage     = 0;
-    let netProfit     = 0;
-    let action        = '';
-
-    if (!ilHalted && !(pauseHigh && currentMode === 'HIGH') &&
-        boughtQty >= 1 && soldQty >= 1) {
-
-      grossProfit   = soldRevenue - boughtCost;
-      brokerageOnBuy  = buyBrokerPct  * boughtCost;
-      brokerageOnSell = sellBrokerPct * soldRevenue;
-      brokerage     = brokerageOnBuy + brokerageOnSell;
-      netProfit     = grossProfit - brokerage;
-
-      if (netProfit > 0) {
-        cashProfit     += netProfit;
-        totalBrokerage += brokerage;
-
-        // Update integer pool inventory
-        // DUST CONTROL: after updating, store only the floor.
-        // The fractional remainder from the continuous AMM is discarded here.
-        if (boughtAsset === 'Asset 1') {
-          poolX = Math.floor(poolX + boughtQty);
-          poolY = Math.floor(poolY - soldQty);
-        } else {
-          poolY = Math.floor(poolY + boughtQty);
-          poolX = Math.floor(poolX - soldQty);
+        let recSwap = null;
+        if (dx >= 0.5 && dy <= -0.5) {
+          const dxB = Math.floor(dx); if (dxB >= 1) {
+            const xA = x+dxB, dyO = Math.floor(y - k/xA);
+            if (dyO >= 1) recSwap = {dir:'BUY1_SELL2', dxBuy:dxB, dyOut:dyO, xA, yA:y-dyO, cost:dxB*p1, rev:dyO*p2};
+          }
+        } else if (dy >= 0.5 && dx <= -0.5) {
+          const dyB = Math.floor(dy); if (dyB >= 1) {
+            const yA = y+dyB, dxO = Math.floor(x - k/yA);
+            if (dxO >= 1) recSwap = {dir:'BUY2_SELL1', dyBuy:dyB, dxOut:dxO, xA:x-dxO, yA, cost:dyB*p2, rev:dxO*p1};
+          }
         }
 
-        // Re-derive L from new integer holdings to keep the invariant clean
-        L = lFromXY(poolX, poolY, clamp(p, pa, pb), pa, pb);
+        if (recSwap) {
+          const gross = recSwap.rev - recSwap.cost;
+          const brok  = buyBrok*recSwap.cost + sellBrok*recSwap.rev;
+          const net   = gross - brok;
+          // Always execute recenter (even if net < 0) to keep pool aligned
+          cashProfit     += net;
+          totalBrokerage += brok;
+          x = recSwap.xA; y = recSwap.yA; k = x*y;
+          recenterSwaps++;
 
-        action = `Buy ${boughtAsset} / Sell ${soldAsset}`;
-        tradeExecuted = true;
+          const poolVal = x*p1 + y*p2;
+          const holdVal = xInit*p1 + yInit*p2;
+          const ilPct   = holdVal>0 ? (poolVal/holdVal-1)*100 : 0;
+
+          const action = recSwap.dir==='BUY1_SELL2'
+            ? 'RECENTER: Buy Asset1 / Sell Asset2'
+            : 'RECENTER: Buy Asset2 / Sell Asset1';
+          const boughtAsset = recSwap.dir==='BUY1_SELL2' ? 'Asset 1' : 'Asset 2';
+          const soldAsset   = recSwap.dir==='BUY1_SELL2' ? 'Asset 2' : 'Asset 1';
+          const boughtQty   = recSwap.dir==='BUY1_SELL2' ? recSwap.dxBuy : recSwap.dyBuy;
+          const soldQty     = recSwap.dir==='BUY1_SELL2' ? recSwap.dyOut : recSwap.dxOut;
+
+          swapRecords.push({
+            date: row.date.toISOString(), mode: currentMode,
+            rollingCorrelation: corr, dynamicWidthPct: dynW*100,
+            isRecenter: true, action,
+            boughtAsset, boughtQty, boughtCost: recSwap.cost,
+            soldAsset, soldQty, soldRevenue: recSwap.rev,
+            grossProfit: gross, brokerageOnBuy: buyBrok*recSwap.cost,
+            brokerageOnSell: sellBrok*recSwap.rev, totalBrokerage: brok,
+            netProfit: net, cashProfit,
+            asset1Price: p1, asset2Price: p2,
+            poolX: x, poolY: y, poolAssetValue: poolVal, ilPct,
+            totalValue: poolVal + cashProfit,
+          });
+        }
+        centerRatio = extRatio;
+        recenterCount++;
+        didRecenter = true;
+      } else {
+        // Pause — skip trade, optionally still update center
+        // (do nothing; pool stays as-is)
       }
     }
 
-    // ── 8. Impermanent loss ───────────────────────────────────────────────────
-    const poolAssetValue = poolX * p1 + poolY * p2;
-    const holdValue      = xInit * p1 + yInit * p2;
-    const ilINR          = poolAssetValue - holdValue;
-    // IL% vs hold — negative = LP did worse than holding
-    const ilPct = holdValue > 0 ? (poolAssetValue / holdValue - 1) * 100 : 0;
+    // ── 4b. Regular swap (in-range hours) ────────────────────────────────────
+    if (inRange && !ilHalted && !(pauseHigh && currentMode==='HIGH')) {
+      const swap = computeSwap(x, y, p1, p2);
+      if (swap) {
+        const gross = swap.revenue - swap.cost;
+        const brok  = buyBrok*swap.cost + sellBrok*swap.revenue;
+        const net   = gross - brok;
 
-    // ── 9. IL stop-loss ───────────────────────────────────────────────────────
-    if (!ilHalted && ilStopLossPct > 0 && ilPct < -ilStopLossPct) {
-      ilHalted   = true;
-      ilHaltedAt = row.date.toISOString();
-    }
+        if (net > 0) {
+          cashProfit     += net;
+          totalBrokerage += brok;
+          x = swap.xAfter; y = swap.yAfter; k = x*y;
+          totalSwaps++;
 
-    // ── 10. Record swap ────────────────────────────────────────────────────────
-    if (tradeExecuted) {
-      const lastRec = swapRecords[swapRecords.length - 1];
-      // Patch IL into the recenter record that preceded this (same hour)
-      if (lastRec && lastRec.isRecenterTrade && lastRec.ilPct === 0) {
-        lastRec.ilPct      = ilPct;
-        lastRec.totalValue = poolAssetValue + cashProfit;
-      }
+          const boughtAsset = swap.direction==='BUY1_SELL2' ? 'Asset 1' : 'Asset 2';
+          const soldAsset   = swap.direction==='BUY1_SELL2' ? 'Asset 2' : 'Asset 1';
+          const boughtQty   = swap.direction==='BUY1_SELL2' ? swap.dxBuy : swap.dyBuy;
+          const soldQty     = swap.direction==='BUY1_SELL2' ? swap.dyOut : swap.dxOut;
+          const action      = `Buy ${boughtAsset} / Sell ${soldAsset}`;
 
-      swapRecords.push({
-        date:              row.date.toISOString(),
-        mode:              currentMode,
-        rollingCorrelation: corr,
-        dynamicWidthPct:   dynW * 100,
-        recentered:        doRecenter,
-        isRecenterTrade:   false,
-        action,
-        boughtAsset,
-        boughtQty,         // integer shares bought
-        boughtCost,        // ₹ cost of buy leg
-        soldAsset,
-        soldQty,           // integer shares sold
-        soldRevenue,       // ₹ revenue of sell leg
-        grossProfit,
-        brokerageOnBuy,
-        brokerageOnSell,
-        totalBrokerage:    brokerage,
-        netProfit,
-        cashProfit,
-        asset1Price:       p1,
-        asset2Price:       p2,
-        priceRatio:        p,
-        centerRatio:       centerP,
-        poolX,             // integer Asset1 held
-        poolY,             // integer Asset2 held
-        poolAssetValue,
-        ilINR,
-        ilPct,
-        totalValue:        poolAssetValue + cashProfit,
-      });
-    } else if (doRecenter && swapRecords.length > 0) {
-      // Patch IL into the recenter record even when no swap followed
-      const lastRec = swapRecords[swapRecords.length - 1];
-      if (lastRec && lastRec.isRecenterTrade && lastRec.ilPct === 0) {
-        lastRec.ilPct      = ilPct;
-        lastRec.totalValue = poolAssetValue + cashProfit;
+          const poolVal = x*p1 + y*p2;
+          const holdVal = xInit*p1 + yInit*p2;
+          const ilPct   = holdVal>0 ? (poolVal/holdVal-1)*100 : 0;
+
+          swapRecords.push({
+            date: row.date.toISOString(), mode: currentMode,
+            rollingCorrelation: corr, dynamicWidthPct: dynW*100,
+            isRecenter: false, action,
+            boughtAsset, boughtQty, boughtCost: swap.cost,
+            soldAsset, soldQty, soldRevenue: swap.revenue,
+            grossProfit: gross, brokerageOnBuy: buyBrok*swap.cost,
+            brokerageOnSell: sellBrok*swap.revenue, totalBrokerage: brok,
+            netProfit: net, cashProfit,
+            asset1Price: p1, asset2Price: p2,
+            poolX: x, poolY: y, poolAssetValue: poolVal, ilPct,
+            totalValue: poolVal + cashProfit,
+          });
+
+          // IL stop-loss check
+          if (!ilHalted && ilStopLoss > 0 && ilPct < -ilStopLoss) {
+            ilHalted = true; ilHaltedAt = row.date.toISOString();
+          }
+        }
       }
     }
 
-    // ── 11. Equity curve ──────────────────────────────────────────────────────
+    // ── Equity curve ──────────────────────────────────────────────────────────
+    const poolVal = x*p1 + y*p2;
+    const holdVal = xInit*p1 + yInit*p2;
+    const ilPct   = holdVal>0 ? (poolVal/holdVal-1)*100 : 0;
+    if (!ilHalted && ilStopLoss > 0 && ilPct < -ilStopLoss) {
+      ilHalted = true; ilHaltedAt = row.date.toISOString();
+    }
     equityCurve.push({
-      date:            row.date.toISOString(),
-      poolValue:       poolAssetValue + cashProfit,
-      holdValue,
-      cashProfit,
-      ilPct,
-      correlation:     corr,
-      dynamicWidthPct: dynW * 100,
-      mode:            currentMode,
-      halted:          ilHalted,
+      date: row.date.toISOString(),
+      poolValue: poolVal + cashProfit, holdValue: holdVal,
+      cashProfit, ilPct,
+      correlation: corr, dynamicWidthPct: dynW*100,
+      mode: currentMode, halted: ilHalted,
     });
   }
 
   // ── Final metrics ────────────────────────────────────────────────────────────
-  const last       = hourly[hourly.length - 1];
-  const holdValue  = xInit * last.c1 + yInit * last.c2;
-  const poolAssets = poolX * last.c1 + poolY * last.c2;
-  const totalValue = poolAssets + cashProfit;
-  const ilINR      = poolAssets - holdValue;
-  const ilPct      = holdValue > 0 ? (poolAssets / holdValue - 1) * 100 : 0;
-  const roiPct     = initCashDeployed > 0 ? (totalValue / initCashDeployed - 1) * 100 : 0;
-  const holdRoiPct = initCashDeployed > 0 ? (holdValue  / initCashDeployed - 1) * 100 : 0;
-  const cashRoiPct = initCashDeployed > 0 ? cashProfit  / initCashDeployed * 100 : 0;
-  const brokerageRoiPct = initCashDeployed > 0 ? totalBrokerage / initCashDeployed * 100 : 0;
+  const last     = hourly[hourly.length-1];
+  const holdVal  = xInit*last.c1 + yInit*last.c2;
+  const poolVal  = x*last.c1 + y*last.c2;
+  const totVal   = poolVal + cashProfit;
+  const ilINR    = poolVal - holdVal;
+  const ilPct    = holdVal>0 ? (poolVal/holdVal-1)*100 : 0;
+  const roiPct   = initCashDeployed>0 ? (totVal/initCashDeployed-1)*100 : 0;
+  const holdRoi  = initCashDeployed>0 ? (holdVal/initCashDeployed-1)*100 : 0;
+  const cashRoi  = initCashDeployed>0 ? cashProfit/initCashDeployed*100 : 0;
+  const brokRoi  = initCashDeployed>0 ? totalBrokerage/initCashDeployed*100 : 0;
 
   return {
     swaps: swapRecords,
     equityCurve,
     results: {
-      initCashDeployed,
-      totalValue,
-      poolAssets,
-      holdValue,
-      cashProfit,
-      totalBrokerage,
-      roiPct,
-      holdRoiPct,
-      cashRoiPct,
-      brokerageRoiPct,
-      ilINR,
-      ilPct,
-      ilHalted,
-      ilHaltedAt,
-      totalSwaps:     swapRecords.filter(s => !s.isRecenterTrade).length,
-      recenterTrades: swapRecords.filter(s =>  s.isRecenterTrade).length,
-      recenterCount,
-      buyBrokeragePct:  buyBrokerPct  * 100,
-      sellBrokeragePct: sellBrokerPct * 100,
-      initialX: xInit,
-      initialY: yInit,
-      finalX:   poolX,
-      finalY:   poolY,
-      lowModeHours:  modeHours.LOW,
-      midModeHours:  modeHours.MID,
+      initCashDeployed, totalValue: totVal, poolAssets: poolVal,
+      holdValue: holdVal, cashProfit, totalBrokerage,
+      roiPct, holdRoi, cashRoi, brokRoi,
+      ilINR, ilPct, ilHalted, ilHaltedAt,
+      totalSwaps, recenterSwaps, recenterCount,
+      buyBrokeragePct: buyBrok*100, sellBrokeragePct: sellBrok*100,
+      initialX: xInit, initialY: yInit, finalX: x, finalY: y,
+      lowModeHours: modeHours.LOW, midModeHours: modeHours.MID,
       highModeHours: modeHours.HIGH,
     },
   };
