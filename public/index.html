@@ -3,83 +3,28 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AMM Pool ALM Dashboard</title>
+    <title>AMM Volatility Harvesting Dashboard</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="page-shell">
+
+      <!-- ── Sidebar ──────────────────────────────────────────────────── -->
       <aside class="sidebar">
         <div>
-          <p class="eyebrow">Hourly Event-Driven ALM</p>
-          <h1>Arrakis-Style Stock-to-Stock ALM Dashboard</h1>
+          <p class="eyebrow">NSE Stock Pool · Concentrated Liquidity</p>
+          <h1>AMM Volatility Harvesting</h1>
           <p class="lede">
-            Upload two 1-minute CSV files with <code>date</code>, <code>close</code>, and <code>volume</code>. The engine applies
-            dynamic risk modes, dynamic concentration width, dynamic recentering, and whole-unit swaps.
+            Simulates a stock-to-stock swap pool on Indian markets.
+            Because stocks can't be transferred between demats instantly,
+            each rebalance places <strong>simultaneous buy + sell orders</strong>:
+            buy the cheap leg from the open market, release the expensive leg
+            via the AMM equation, sell it back. All profit is cash.
+            Brokerage (0.3% on total notional) is deducted per swap.
           </p>
         </div>
 
-        <section class="panel">
-          <h2>Pool & Risk Parameters</h2>
-          <label>
-            Total Real Capital (₹)
-            <input id="realCapital" type="number" min="0" step="100000" value="2000000" />
-          </label>
-          <label>
-            Virtual Capital per Asset (₹)
-            <input id="virtualCapital" type="number" min="0" step="500000" value="10000000" />
-          </label>
-          <label>
-            0.3% Fee Setting (%)
-            <input id="feePct" type="number" min="0" step="0.05" value="0.3" />
-          </label>
-          <label>
-            LOW Width (%)
-            <input id="lowWidth" type="number" min="0.1" step="0.05" value="0.75" />
-          </label>
-          <label>
-            MID Width (%)
-            <input id="midWidth" type="number" min="0.1" step="0.1" value="2" />
-          </label>
-          <label>
-            HIGH Width (%)
-            <input id="highWidth" type="number" min="0.1" step="0.25" value="5" />
-          </label>
-          <label>
-            Sigma Threshold (σ)
-            <input id="sigmaThreshold" type="number" min="0.1" step="0.1" value="1" />
-          </label>
-          <label>
-            Volume Lookback (Hours)
-            <input id="lookbackHours" type="number" min="5" step="1" value="24" />
-          </label>
-          <label>
-            Correlation Lookback (Hours)
-            <input id="corrLookbackHours" type="number" min="5" step="1" value="24" />
-          </label>
-          <label>
-            Correlation Impact (0-1)
-            <input id="correlationImpact" type="number" min="0" max="1" step="0.05" value="0.6" />
-          </label>
-          <label>
-            Recenter Trigger (% of Width)
-            <input id="recenterTriggerPct" type="number" min="10" max="150" step="5" value="75" />
-          </label>
-          <label>
-            <input id="pauseHighVol" type="checkbox" /> Pause swaps in HIGH mode
-          </label>
-        </section>
-
-        <section class="panel small">
-          <h2>Settings Guide</h2>
-          <ul>
-            <li><b>LOW/MID/HIGH Width</b>: narrower = tighter concentration, wider = safer inventory.</li>
-            <li><b>Sigma Threshold</b>: higher means fewer mode switches.</li>
-            <li><b>Correlation Impact</b>: high impact widens ranges more when correlation weakens.</li>
-            <li><b>Recenter Trigger</b>: default 75 means re-center when ratio drifts 75% of current width.</li>
-            <li><b>Fee Setting</b>: flat friction deducted from swap revenue each trade.</li>
-          </ul>
-        </section>
-
+        <!-- Upload -->
         <section class="panel">
           <h2>Upload Datasets</h2>
           <label class="upload-zone">
@@ -88,70 +33,235 @@
           </label>
           <label>
             Asset 1 Label
-            <input id="asset1Label" value="Asset 1" />
+            <input id="asset1Label" value="Reliance" />
           </label>
           <label class="upload-zone">
-            <span id="asset2FileName">Upload Asset 2 CSV (e.g., Kotak)</span>
+            <span id="asset2FileName">Upload Asset 2 CSV (e.g., Kotak Bank)</span>
             <input id="asset2File" type="file" accept=".csv,text/csv" />
           </label>
           <label>
             Asset 2 Label
-            <input id="asset2Label" value="Asset 2" />
+            <input id="asset2Label" value="Kotak Bank" />
           </label>
-          <button id="runSimulation" class="primary-button">Run Simulation</button>
+          <button id="runSimulation" class="primary-button">▶ Run Simulation</button>
         </section>
 
+        <!-- Capital & Brokerage -->
+        <section class="panel">
+          <h2>Capital &amp; Brokerage</h2>
+          <label>
+            Total Capital (₹)
+            <input id="realCapital" type="number" min="0" step="100000" value="2000000" />
+          </label>
+          <label>
+            Brokerage Rate (%)
+            <input id="feePct" type="number" min="0" step="0.05" value="0.3" />
+          </label>
+          <p class="hint">
+            Capital is split 50/50 by value between both stocks at open.<br/>
+            Brokerage is deducted from gross profit on every swap.
+            A swap only executes if <strong>net profit &gt; 0</strong>.
+          </p>
+        </section>
+
+        <!-- IL Stop-Loss -->
+        <section class="panel panel-highlight">
+          <h2>🛑 IL Stop-Loss</h2>
+          <label>
+            Max Impermanent Loss (%)
+            <input id="ilStopLossPct" type="number" min="0" max="100" step="0.5" value="5" />
+          </label>
+          <p class="hint">
+            If the pool's asset value drops more than this % below the
+            buy-and-hold value, <strong>all swapping halts immediately</strong>
+            for the rest of the backtest period. Set to <code>0</code> to disable.
+          </p>
+        </section>
+
+        <!-- Range widths -->
+        <section class="panel">
+          <h2>Concentration Range Widths</h2>
+          <label>
+            LOW-volume Width (%)
+            <input id="lowWidth" type="number" min="0.05" step="0.05" value="0.75" />
+          </label>
+          <label>
+            MID-volume Width (%)
+            <input id="midWidth" type="number" min="0.05" step="0.1" value="2" />
+          </label>
+          <label>
+            HIGH-volume Width (%)
+            <input id="highWidth" type="number" min="0.05" step="0.25" value="5" />
+          </label>
+          <p class="hint">
+            Narrower = more profitable per swap but higher IL risk.<br/>
+            Wider = lower profit per swap but safer inventory drift.
+          </p>
+        </section>
+
+        <!-- Dynamic parameters -->
+        <section class="panel">
+          <h2>Dynamic Correlation &amp; Recentering</h2>
+          <label>
+            Correlation Lookback (hours)
+            <input id="corrLookbackHours" type="number" min="2" step="1" value="24" />
+          </label>
+          <label>
+            Correlation Impact (0 – 2)
+            <input id="correlationImpact" type="number" min="0" max="2" step="0.05" value="0.6" />
+          </label>
+          <label>
+            Recenter Trigger (% of current width)
+            <input id="recenterTriggerPct" type="number" min="10" max="200" step="5" value="75" />
+          </label>
+          <label>
+            <input id="pauseHighVol" type="checkbox" />
+            Pause swaps during HIGH-volume hours
+          </label>
+          <p class="hint">
+            <b>Correlation Impact 0.6</b> → width increases by 60% when corr = 0.<br/>
+            <b>Recenter Trigger 75%</b> → re-center when ratio drifts 75% of current width.
+          </p>
+        </section>
+
+        <!-- Volume regime -->
+        <section class="panel">
+          <h2>Volume Regime Detector</h2>
+          <label>
+            Sigma Threshold (σ)
+            <input id="sigmaThreshold" type="number" min="0.1" step="0.1" value="1" />
+          </label>
+          <label>
+            Volume Lookback (hours)
+            <input id="lookbackHours" type="number" min="2" step="1" value="24" />
+          </label>
+          <p class="hint">
+            Each hour is classified LOW / MID / HIGH based on how many σ its
+            volume deviates from the rolling mean.
+          </p>
+        </section>
+
+        <!-- CSV format -->
         <section class="panel small">
           <h2>CSV Format</h2>
           <ul>
-            <li><code>date</code> — timestamp column</li>
-            <li><code>close</code> — close price column</li>
-            <li><code>volume</code> — trade volume column (required)</li>
-            <li>Swaps are whole-unit stock quantities only</li>
+            <li><code>date</code> — ISO timestamp (e.g. <code>2025-01-01 09:15:00+05:30</code>)</li>
+            <li><code>close</code> — close price in ₹</li>
+            <li><code>volume</code> — trade volume</li>
+            <li>1-minute bars are merged to hourly automatically</li>
           </ul>
         </section>
       </aside>
 
+      <!-- ── Main content ──────────────────────────────────────────────── -->
       <section class="content">
+
+        <!-- Status -->
         <div id="statusBanner" class="status-banner info">
           <strong>INFO:</strong>
-          <span>Upload both CSV datasets to run the simulation.</span>
+          <span>Upload both 1-minute CSV datasets and click Run Simulation.</span>
         </div>
 
+        <!-- IL halt banner -->
+        <div id="ilBanner" class="il-banner hidden"></div>
+
+        <!-- Metrics -->
         <div class="panel chart-panel">
           <div class="panel-header">
             <div>
-              <p class="eyebrow">Pool Overview</p>
-              <h2 id="pairHeading">Asset 1 vs Asset 2</h2>
+              <p class="eyebrow">Simulation Results</p>
+              <h2 id="pairHeading">Reliance ↔ Kotak Bank</h2>
             </div>
-            <button id="downloadCsv" class="secondary-button hidden">Download Full Swap History</button>
+            <button id="downloadCsv" class="secondary-button hidden">⬇ Download Swap CSV</button>
           </div>
           <div id="metricsGrid" class="metric-grid">
             <div class="empty-state">
-              <h3>No simulation results yet</h3>
-              <p>Upload two CSV files and run the model to see ROI, risk modes, recentering, and swap history.</p>
+              <h3>No results yet</h3>
+              <p>Upload two CSV files and run the simulation.</p>
             </div>
           </div>
         </div>
 
+        <!-- P&L explainer -->
+        <div class="panel explainer">
+          <p class="eyebrow">How profits are calculated</p>
+          <div class="explainer-grid">
+            <div class="explainer-step">
+              <span class="step-num">1</span>
+              <div>
+                <strong>AMM detects a price divergence</strong>
+                <p>The price ratio of the two stocks shifts. The V3 AMM equation tells us how much of each stock the pool should now hold.</p>
+              </div>
+            </div>
+            <div class="explainer-step">
+              <span class="step-num">2</span>
+              <div>
+                <strong>Buy the cheap leg from the market</strong>
+                <p>We buy Δ units of the underweighted stock from the open market at current price. Cash out = Δ × price.</p>
+              </div>
+            </div>
+            <div class="explainer-step">
+              <span class="step-num">3</span>
+              <div>
+                <strong>AMM releases the overweighted leg</strong>
+                <p>The AMM equation gives us Δ′ units of the overweighted stock to release. We sell these at market price. Cash in = Δ′ × price.</p>
+              </div>
+            </div>
+            <div class="explainer-step">
+              <span class="step-num">4</span>
+              <div>
+                <strong>Net profit = revenue − cost − brokerage</strong>
+                <p>0.3% brokerage on total notional (both legs) is deducted. Trade only executes if net profit &gt; 0.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Equity chart -->
         <div class="panel">
           <div class="panel-header">
             <div>
-              <p class="eyebrow">Hourly ALM Swap History</p>
-              <h2>Executed inventory rebalances</h2>
+              <p class="eyebrow">Performance Chart</p>
+              <h2>AMM Total Value vs Buy-and-Hold vs Cash Profit</h2>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="equityChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Correlation / IL chart -->
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Dynamic Parameters</p>
+              <h2>Rolling Correlation · Dynamic Width · Impermanent Loss %</h2>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="corrChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Swap table -->
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Swap History</p>
+              <h2>Buy + Sell orders placed each hour</h2>
             </div>
             <span id="swapCount" class="pill hidden"></span>
           </div>
           <div id="swapTableContainer">
             <div class="empty-state compact">
-              <h3>No profitable swaps found</h3>
-              <p>Adjust risk settings and run again.</p>
+              <h3>No swaps yet</h3>
+              <p>Run the simulation to see hourly trade records.</p>
             </div>
           </div>
         </div>
+
       </section>
     </main>
-
     <script type="module" src="/app.js"></script>
   </body>
 </html>
