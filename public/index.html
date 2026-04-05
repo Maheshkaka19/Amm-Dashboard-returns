@@ -3,23 +3,23 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>AMM Volatility Harvesting Dashboard</title>
+  <title>AMM Volatility Harvesting — Arrakis Style</title>
   <link rel="stylesheet" href="/styles.css"/>
 </head>
 <body>
 <main class="page-shell">
 
-  <!-- ── Sidebar ──────────────────────────────────────────────── -->
   <aside class="sidebar">
     <div class="sidebar-top">
-      <p class="eyebrow">NSE Stock Pool · x·y = k · Whole Shares Only</p>
+      <p class="eyebrow">Arrakis / Uniswap V3 Style · x·y=k · NSE Whole Shares</p>
       <h1>AMM Volatility Harvesting</h1>
       <p class="lede">
-        Runs a self-managed <strong>constant-product pool</strong> (x·y = k) on
-        two NSE stocks. Each rebalance is simulated as two simultaneous market
-        orders — buy the input leg, AMM releases the output leg, sell it.
-        All quantities are <strong>whole shares</strong>. No fractions.
-        Profits accumulate as cash. IL is tracked separately.
+        Active concentrated-liquidity management on two NSE stocks.
+        Swaps arbitrage intra-band price moves. Recentering keeps the pool
+        aligned when price exits the band. Correlation widens or tightens
+        the band dynamically. All quantities are <strong>whole shares</strong>
+        (round-to-nearest, floor-guarded). IL and cash profit are tracked
+        independently so you can see the true LP return vs holding.
       </p>
     </div>
 
@@ -51,8 +51,8 @@
           <input id="sellBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
         </label>
       </div>
-      <p class="hint">Capital split 50/50 by value, floored to whole shares.
-      0.15%+0.15% = 0.30% round-trip (Zerodha standard).</p>
+      <p class="hint">0.15%+0.15% = 0.30% round-trip (Zerodha/NSE standard).
+      Capital split 50/50 by value, rounded to nearest whole share.</p>
     </section>
 
     <section class="panel panel-danger">
@@ -60,51 +60,68 @@
       <label>Max Impermanent Loss (%)
         <input id="ilStopLossPct" type="number" min="0" max="100" step="0.5" value="0"/>
       </label>
-      <p class="hint">Halts all new swaps once pool asset value drops more than this % below hold value. Set 0 to disable.</p>
+      <p class="hint">Halts all swapping once pool asset value drops more than this% below hold value. <strong>0 = disabled</strong> (recommended for backtesting).</p>
     </section>
 
     <section class="panel">
-      <h2>Concentration Range</h2>
+      <h2>Concentration Range Widths</h2>
       <div class="three-col">
-        <label>LOW vol (%)<input id="lowWidth" type="number" min="0.05" step="0.05" value="0.75"/></label>
-        <label>MID vol (%)<input id="midWidth" type="number" min="0.05" step="0.1"  value="2"/></label>
-        <label>HIGH vol (%)<input id="highWidth" type="number" min="0.05" step="0.25" value="5"/></label>
+        <label>LOW vol (%)<input id="lowWidth" type="number" min="0.05" step="0.05" value="0.5"/></label>
+        <label>MID vol (%)<input id="midWidth" type="number" min="0.05" step="0.1"  value="1.0"/></label>
+        <label>HIGH vol (%)<input id="highWidth" type="number" min="0.05" step="0.25" value="2.0"/></label>
       </div>
-      <p class="hint">Half-width of the price-ratio band. Swaps only execute when the
-      current ratio is within this % of the center. Narrower = more swaps per move, higher IL exposure.</p>
+      <p class="hint">
+        Half-width of the active price-ratio band. Swaps execute only while ratio
+        is within ±width% of the center.<br/>
+        <strong>Tighter = more fee capture, more recenters.</strong><br/>
+        <strong>Wider = fewer recenters, lower fee capture.</strong><br/>
+        Recommended starting point: LOW 0.5% / MID 1% / HIGH 2%.
+      </p>
     </section>
 
     <section class="panel">
-      <h2>Dynamic Correlation &amp; Recentering</h2>
+      <h2>Dynamic Correlation Management</h2>
       <div class="two-col">
         <label>Corr Lookback (hrs)<input id="corrLookbackHours" type="number" min="2" step="1" value="24"/></label>
         <label>Corr Impact (0–2)<input id="correlationImpact" type="number" min="0" max="2" step="0.05" value="0.6"/></label>
       </div>
-      <label>Recenter Trigger (% of width)
-        <input id="recenterTriggerPct" type="number" min="10" max="200" step="5" value="100"/>
+      <label>Recenter Trigger (UI only)
+        <input id="recenterTriggerPct" type="number" min="10" max="200" step="5" value="100" disabled style="opacity:0.4"/>
       </label>
       <label class="checkbox-label">
         <input id="recenterEnabled" type="checkbox" checked/>
-        Enable recentering (executes a real rebalance trade)
+        Enable recentering (charges real brokerage)
       </label>
       <label class="checkbox-label">
         <input id="pauseHighVol" type="checkbox"/>
         Pause swaps in HIGH-volume hours
       </label>
       <p class="hint">
-        When price drifts outside the range, a real market rebalancing trade
-        is placed (brokerage charged). If recentering is disabled, the pool
-        simply pauses until price returns to the band.
+        <strong>Impact 0.6</strong> → width grows by 60% when correlation = 0 (fully diverging).<br/>
+        <strong>Impact 0.0</strong> → fixed width regardless of correlation.<br/>
+        High corr stocks (>0.8): use lower impact. Low corr pairs: use higher impact.
       </p>
     </section>
 
     <section class="panel">
       <h2>Volume Regime</h2>
       <div class="two-col">
-        <label>Sigma (σ)<input id="sigmaThreshold" type="number" min="0.1" step="0.1" value="1"/></label>
+        <label>Sigma (σ)<input id="sigmaThreshold" type="number" min="0.1" step="0.1" value="1.0"/></label>
         <label>Lookback (hrs)<input id="lookbackHours" type="number" min="2" step="1" value="24"/></label>
       </div>
-      <p class="hint">Classifies each hour as LOW/MID/HIGH by comparing volume to rolling mean ± σ·SD.</p>
+      <p class="hint">Each hour classified as LOW/MID/HIGH by comparing its volume to rolling mean ± σ·SD. Drives which base width is used.</p>
+    </section>
+
+    <section class="panel small">
+      <h2>Strategy Guide — Net-Zero / Positive vs Hold</h2>
+      <ul>
+        <li><strong>Use correlated pairs</strong> (sector peers, Nifty50 heavyweights) — lowers IL</li>
+        <li><strong>Tight width (0.5–1%)</strong> captures more micro-moves per rupee deployed</li>
+        <li><strong>Low brokerage</strong> — every recenter costs 0.30%; frequent recentering with wide band destroys profit</li>
+        <li><strong>Correlation impact 0.4–0.8</strong> — widens when pair diverges, preventing premature recenters</li>
+        <li><strong>Disable IL stop-loss</strong> during backtesting — it can prematurely halt profitable periods</li>
+        <li><strong>Recenter enabled</strong> — keeps pool active; disabled means liquidity is idle when out-of-range</li>
+      </ul>
     </section>
 
     <section class="panel small">
@@ -113,20 +130,18 @@
         <li><code>date</code> — e.g. <code>2025-01-01 09:15:00+05:30</code></li>
         <li><code>close</code> — price in ₹</li>
         <li><code>volume</code> — trade volume</li>
-        <li>1-minute bars merged to hourly automatically</li>
+        <li>1-minute bars merged to hourly last-close automatically</li>
       </ul>
     </section>
   </aside>
 
-  <!-- ── Content ────────────────────────────────────────────────── -->
   <section class="content">
 
     <div id="statusBanner" class="status-banner info">
-      <strong>INFO:</strong> <span>Upload both 1-minute CSV files and click Run Simulation.</span>
+      <strong>INFO:</strong> <span>Upload both 1-minute CSV datasets and click Run Simulation.</span>
     </div>
     <div id="ilBanner" class="il-banner hidden"></div>
 
-    <!-- Metrics -->
     <div class="panel">
       <div class="panel-header">
         <div><p class="eyebrow">Simulation Results</p><h2 id="pairHeading">Reliance ↔ Kotak Bank</h2></div>
@@ -137,51 +152,47 @@
       </div>
     </div>
 
-    <!-- Mechanic explainer -->
     <div class="panel explainer">
-      <p class="eyebrow">How each swap is executed (NSE market orders)</p>
+      <p class="eyebrow">How each arbitrage swap works (two simultaneous NSE orders)</p>
       <div class="explainer-grid">
         <div class="explainer-step"><span class="step-num">1</span><div>
-          <strong>Price ratio shifts</strong>
-          <p>External p1/p2 diverges from pool's internal y/x. This creates an arbitrage opportunity in the pool.</p>
+          <strong>Price ratio moves inside the active band</strong>
+          <p>External p1/p2 diverges from pool's internal y/x ratio. Arbitrage opportunity exists. We act as pool operator capturing the spread.</p>
         </div></div>
         <div class="explainer-step"><span class="step-num">2</span><div>
-          <strong>Buy input asset (whole shares) from NSE</strong>
-          <p>Place market buy order. Qty = ⌊AMM delta⌋ integer shares. Cost = Qty × market price. Buy brokerage charged.</p>
+          <strong>Buy input asset — round-to-nearest whole shares</strong>
+          <p>Market BUY order on NSE. Qty = round(AMM target delta). Cost = Qty × price. Buy brokerage 0.15% charged.</p>
         </div></div>
         <div class="explainer-step"><span class="step-num">3</span><div>
-          <strong>AMM releases output asset (x·y=k law)</strong>
-          <p>Pool absorbs the input. Constant-product equation yields exact integer output shares. Pool inventory updated.</p>
+          <strong>Pool releases output via x·y=k law</strong>
+          <p>Output qty = round(y − k/(x+input)). Derived exactly from invariant — not approximated. Floor guard prevents over-selling.</p>
         </div></div>
         <div class="explainer-step"><span class="step-num">4</span><div>
-          <strong>Sell output asset to NSE, bank net profit</strong>
-          <p>Market sell order. Revenue = shares × price. Sell brokerage deducted. Net profit banked only if &gt; 0.</p>
+          <strong>Sell output, bank net profit</strong>
+          <p>Market SELL order. Revenue = shares × price. Sell brokerage 0.15%. Net = revenue − cost − both brokerages. Only executes if net &gt; 0.</p>
         </div></div>
       </div>
     </div>
 
-    <!-- Equity chart -->
     <div class="panel">
       <div class="panel-header"><div>
-        <p class="eyebrow">Performance</p>
-        <h2>AMM Total Value vs Buy-and-Hold vs Cash Profit</h2>
+        <p class="eyebrow">Performance vs Hold</p>
+        <h2>AMM Total Value · Buy-and-Hold · Cash Profit</h2>
       </div></div>
       <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
     </div>
 
-    <!-- Params chart -->
     <div class="panel">
       <div class="panel-header"><div>
         <p class="eyebrow">Dynamic Parameters</p>
-        <h2>Rolling Correlation · Dynamic Width · IL %</h2>
+        <h2>Rolling Correlation · Active Width · Impermanent Loss %</h2>
       </div></div>
       <div class="chart-wrap"><canvas id="corrChart"></canvas></div>
     </div>
 
-    <!-- Swap table -->
     <div class="panel">
       <div class="panel-header">
-        <div><p class="eyebrow">Trade History</p><h2>Every swap &amp; recenter executed</h2></div>
+        <div><p class="eyebrow">Trade History</p><h2>Every swap &amp; recenter with full P&amp;L breakdown</h2></div>
         <span id="swapCount" class="pill hidden"></span>
       </div>
       <div id="swapTableContainer">

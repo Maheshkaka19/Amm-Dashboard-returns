@@ -3,33 +3,31 @@ import { parseCsv, runAlmSimulation } from './simulation-core.js';
 const state = { swaps: [], results: null, equity: [] };
 const $ = id => document.getElementById(id);
 
-// DOM
-const asset1File      = $('asset1File'),   asset2File      = $('asset2File');
-const asset1FileName  = $('asset1FileName'),asset2FileName  = $('asset2FileName');
-const asset1Label     = $('asset1Label'),  asset2Label     = $('asset2Label');
-const realCapInput    = $('realCapital');
-const buyBrokInput    = $('buyBrokeragePct'), sellBrokInput = $('sellBrokeragePct');
-const lowWInput       = $('lowWidth'),  midWInput   = $('midWidth'),  highWInput  = $('highWidth');
-const sigmaInput      = $('sigmaThreshold'), lookbackInput = $('lookbackHours');
-const corrLBInput     = $('corrLookbackHours'), corrImpInput = $('correlationImpact');
-const recTrigInput    = $('recenterTriggerPct');
-const pauseHighInput  = $('pauseHighVol'), recenterOnInput = $('recenterEnabled');
-const ilStopInput     = $('ilStopLossPct');
-const runBtn          = $('runSimulation');
-const statusBanner    = $('statusBanner'), ilBanner = $('ilBanner');
-const metricsGrid     = $('metricsGrid');
-const swapContainer   = $('swapTableContainer');
-const downloadBtn     = $('downloadCsv'), swapCount = $('swapCount');
-const pairHeading     = $('pairHeading');
-const chartCanvas     = $('equityChart'), corrCanvas = $('corrChart');
+const asset1File     = $('asset1File'),    asset2File     = $('asset2File');
+const asset1FileName = $('asset1FileName'),asset2FileName = $('asset2FileName');
+const asset1Label    = $('asset1Label'),   asset2Label    = $('asset2Label');
+const realCapInput   = $('realCapital');
+const buyBrokInput   = $('buyBrokeragePct'), sellBrokInput = $('sellBrokeragePct');
+const lowWInput      = $('lowWidth'),   midWInput  = $('midWidth'),  highWInput = $('highWidth');
+const sigmaInput     = $('sigmaThreshold'), lookbackInput = $('lookbackHours');
+const corrLBInput    = $('corrLookbackHours'), corrImpInput = $('correlationImpact');
+const recTrigInput   = $('recenterTriggerPct'); // kept for UI compat (not used in sim)
+const pauseHighInput = $('pauseHighVol'), recenterOnInput = $('recenterEnabled');
+const ilStopInput    = $('ilStopLossPct');
+const runBtn         = $('runSimulation');
+const statusBanner   = $('statusBanner'), ilBanner = $('ilBanner');
+const metricsGrid    = $('metricsGrid');
+const swapContainer  = $('swapTableContainer');
+const downloadBtn    = $('downloadCsv'), swapCount = $('swapCount');
+const pairHeading    = $('pairHeading');
+const chartCanvas    = $('equityChart'), corrCanvas = $('corrChart');
 
 // Formatters
-const inr  = new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0});
-const inr2 = new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',minimumFractionDigits:2,maximumFractionDigits:2});
+const inr  = v => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(v);
+const inr2 = v => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',minimumFractionDigits:2,maximumFractionDigits:2}).format(v);
 const pct  = (v,d=2) => `${v>=0?'+':''}${(+v).toFixed(d)}%`;
 const qty  = v => new Intl.NumberFormat('en-IN',{maximumFractionDigits:0}).format(Math.round(+v));
 
-// Events
 asset1File.addEventListener('change',()=>{asset1FileName.textContent=asset1File.files[0]?.name||'Upload Asset 1 CSV';});
 asset2File.addEventListener('change',()=>{asset2FileName.textContent=asset2File.files[0]?.name||'Upload Asset 2 CSV';});
 asset1Label.addEventListener('input',updateHeading);
@@ -56,7 +54,6 @@ function getConfig(){
     lookbackHours:     +lookbackInput.value,
     corrLookbackHours: +corrLBInput.value,
     correlationImpact: +corrImpInput.value,
-    recenterTriggerPct:+recTrigInput.value,
     pauseHighVol:      pauseHighInput.checked,
     recenterEnabled:   recenterOnInput.checked,
     ilStopLossPct:     +ilStopInput.value,
@@ -67,24 +64,22 @@ async function handleRun(){
   if (!asset1File.files[0]||!asset2File.files[0]){setStatus('error','Upload both CSV files first.');return;}
   runBtn.disabled=true; runBtn.textContent='Running…';
   ilBanner.classList.add('hidden');
-  setStatus('info','Merging 1-min data → hourly → running x·y=k AMM simulation…');
+  setStatus('info','Merging 1-min data → hourly → Arrakis-style AMM simulation…');
   try {
     await new Promise(r=>setTimeout(r,10));
-    const [t1,t2] = await Promise.all([asset1File.files[0].text(),asset2File.files[0].text()]);
-    const result = runAlmSimulation(parseCsv(t1),parseCsv(t2),+realCapInput.value,getConfig());
+    const [t1,t2]=await Promise.all([asset1File.files[0].text(),asset2File.files[0].text()]);
+    const result=runAlmSimulation(parseCsv(t1),parseCsv(t2),+realCapInput.value,getConfig());
     if (result.error){
       state.swaps=[];state.results=null;state.equity=[];
-      renderMetrics();renderTable();
-      setStatus('error',result.error);
+      renderMetrics();renderTable();setStatus('error',result.error);
     } else {
       state.swaps=result.swaps; state.results=result.results; state.equity=result.equityCurve;
       renderMetrics(); renderTable(); renderCharts(); renderIlBanner();
       const r=result.results;
-      const vs=r.totalValue-r.holdValue;
-      if (vs>=0){
-        setStatus('success',`AMM outperformed hold by ${inr.format(vs)} | Cash profit: ${inr.format(r.cashProfit)} | Brokerage: ${inr.format(r.totalBrokerage)} | IL: ${r.ilPct.toFixed(2)}%`);
+      if (r.vsHold>=0){
+        setStatus('success',`AMM beat hold by ${inr(r.vsHold)} (+${r.vsHoldPct.toFixed(3)}%) | Cash profit: ${inr(r.cashProfit)} | IL: ${r.ilPct.toFixed(3)}% | Brokerage: ${inr(r.totalBrokerage)}`);
       } else {
-        setStatus('warning',`Underperformed hold by ${inr.format(-vs)} — IL (${r.ilPct.toFixed(2)}%) exceeded swaps profit (${inr.format(r.cashProfit)}). Try wider ranges.`);
+        setStatus('warning',`Underperformed hold by ${inr(-r.vsHold)} | Cash: ${inr(r.cashProfit)} | IL: ${r.ilPct.toFixed(3)}% — try tighter width or longer lookback.`);
       }
     }
   } catch(err){setStatus('error',err.message||'Parse error.');}
@@ -95,39 +90,50 @@ function renderIlBanner(){
   const r=state.results;
   if (!r||!r.ilHalted){ilBanner.classList.add('hidden');return;}
   ilBanner.className='il-banner halted';
-  ilBanner.innerHTML=`<span class="il-icon">⛔</span><div><strong>IL Stop-Loss Triggered</strong><span>All swapping halted at ${new Date(r.ilHaltedAt).toLocaleString('en-IN')} — IL exceeded −${(+ilStopInput.value).toFixed(1)}%.</span></div>`;
+  ilBanner.innerHTML=`<span class="il-icon">⛔</span><div><strong>IL Stop-Loss Triggered</strong><span>Halted at ${new Date(r.ilHaltedAt).toLocaleString('en-IN')} — IL exceeded −${(+ilStopInput.value).toFixed(1)}%.</span></div>`;
   ilBanner.classList.remove('hidden');
 }
 
 function renderMetrics(){
   if (!state.results){
     metricsGrid.innerHTML='<div class="empty-state"><h3>No results yet</h3><p>Upload two 1-minute CSV files and run.</p></div>';
-    downloadBtn.classList.add('hidden'); return;
+    downloadBtn.classList.add('hidden');return;
   }
   const r=state.results;
-  const a1=asset1Label.value||'Asset 1', a2=asset2Label.value||'Asset 2';
+  const a1=asset1Label.value||'Asset 1',a2=asset2Label.value||'Asset 2';
+
+  // The headline metric: AMM Total Value vs Hold — is LP profitable?
+  const vsHoldPositive = r.vsHold >= 0;
+
   const cards=[
-    {label:'Cash Deployed',              value:inr.format(r.initCashDeployed),     delta:null},
-    {label:'Total AMM Value',            value:inr.format(r.totalValue),           delta:pct(r.roiPct),  positive:r.roiPct>=0},
-    {label:'Buy-and-Hold Value',         value:inr.format(r.holdValue),            delta:pct(r.holdRoi), positive:r.holdRoi>=0},
-    {label:'AMM vs Hold',                value:inr.format(r.totalValue-r.holdValue),delta:pct(r.roiPct-r.holdRoi),positive:r.totalValue>=r.holdValue},
-    {label:'Cash Profit (all swaps)',    value:inr.format(r.cashProfit),           delta:pct(r.cashRoi), positive:r.cashProfit>=0},
-    {label:'Total Brokerage Paid',       value:inr.format(r.totalBrokerage),       delta:pct(-r.brokRoi),positive:false},
-    {label:'Pool Asset Value',           value:inr.format(r.poolAssets),           delta:null},
-    {label:'Impermanent Loss (IL)',      value:inr.format(r.ilINR),               delta:pct(r.ilPct),   positive:r.ilPct>=0},
-    {label:'Regular Swaps',             value:r.totalSwaps.toLocaleString('en-IN'),delta:null},
-    {label:'Recenter Trades',            value:r.recenterSwaps.toLocaleString('en-IN'),delta:null},
-    {label:'Recenter Events',            value:r.recenterCount.toLocaleString('en-IN'),delta:null},
-    {label:'IL Stop-Loss Hit',           value:r.ilHalted?'⛔ Yes':'✅ No',         delta:null},
-    {label:`Initial ${a1} (shares)`,    value:qty(r.initialX),                    delta:null},
-    {label:`Initial ${a2} (shares)`,    value:qty(r.initialY),                    delta:null},
-    {label:`Final ${a1} (shares)`,      value:qty(r.finalX),                      delta:null},
-    {label:`Final ${a2} (shares)`,      value:qty(r.finalY),                      delta:null},
-    {label:'Mode Hours L/M/H',           value:`${r.lowModeHours}/${r.midModeHours}/${r.highModeHours}`,delta:null},
-    {label:'Buy / Sell Brokerage',       value:`${r.buyBrokeragePct.toFixed(2)}% / ${r.sellBrokeragePct.toFixed(2)}%`,delta:null},
+    // ── Key headline ──
+    {label:'AMM vs Buy-and-Hold',    value:inr(r.vsHold),           delta:pct(r.vsHoldPct,3), positive:vsHoldPositive, highlight:true},
+    // ── Capital ──
+    {label:'Cash Deployed',          value:inr(r.initCashDeployed), delta:null},
+    {label:'Total AMM Value',        value:inr(r.totalValue),       delta:pct(r.roiPct),      positive:r.roiPct>=0},
+    {label:'Buy-and-Hold Value',     value:inr(r.holdValue),        delta:pct(r.holdRoi),     positive:r.holdRoi>=0},
+    {label:'Pool Asset Value',       value:inr(r.poolAssets),       delta:null},
+    // ── P&L breakdown ──
+    {label:'Cash Profit (swaps)',    value:inr(r.cashProfit),       delta:pct(r.cashRoi),     positive:r.cashProfit>=0},
+    {label:'Total Brokerage Paid',   value:inr(r.totalBrokerage),   delta:pct(-r.brokRoi),    positive:false},
+    {label:'Impermanent Loss',       value:inr(r.ilINR),            delta:pct(r.ilPct,3),     positive:r.ilPct>=0},
+    // ── Trades ──
+    {label:'Regular Swaps',          value:r.totalSwaps.toLocaleString('en-IN'),  delta:null},
+    {label:'Recenter Trades',        value:r.recenterSwaps.toLocaleString('en-IN'),delta:null},
+    {label:'Recenter Events',        value:r.recenterCount.toLocaleString('en-IN'),delta:null},
+    {label:'IL Stop-Loss Hit',       value:r.ilHalted?'⛔ Yes':'✅ No',           delta:null},
+    // ── Inventory ──
+    {label:`Initial ${a1} shares`,   value:qty(r.initialX),         delta:null},
+    {label:`Initial ${a2} shares`,   value:qty(r.initialY),         delta:null},
+    {label:`Final ${a1} shares`,     value:qty(r.finalX),           delta:null},
+    {label:`Final ${a2} shares`,     value:qty(r.finalY),           delta:null},
+    // ── Regime ──
+    {label:'Hours L / M / H',        value:`${r.lowModeHours} / ${r.midModeHours} / ${r.highModeHours}`,delta:null},
+    {label:'Brokerage Buy / Sell',   value:`${r.buyBrokeragePct.toFixed(2)}% / ${r.sellBrokeragePct.toFixed(2)}%`,delta:null},
   ];
-  metricsGrid.innerHTML=cards.map(({label,value,delta,positive})=>`
-    <div class="metric-card">
+
+  metricsGrid.innerHTML=cards.map(({label,value,delta,positive,highlight})=>`
+    <div class="metric-card${highlight?' metric-highlight':''}">
       <span class="mc-label">${label}</span>
       <strong class="mc-value">${value}</strong>
       ${delta!=null?`<em class="mc-delta ${positive?'positive':'negative'}">${delta}</em>`:''}
@@ -140,26 +146,26 @@ function renderCharts(){
   const step=Math.max(1,Math.floor(state.equity.length/500));
   const s=state.equity.filter((_,i)=>i%step===0);
   drawChart(chartCanvas,s,[
-    {key:'poolValue', label:'AMM Total Value', color:'#38bdf8'},
-    {key:'holdValue', label:'Buy-and-Hold',    color:'#818cf8'},
-    {key:'cashProfit',label:'Cash Profit',     color:'#22c55e'},
+    {key:'poolValue', label:'AMM Total Value',  color:'#38bdf8'},
+    {key:'holdValue', label:'Buy-and-Hold',     color:'#818cf8'},
+    {key:'cashProfit',label:'Cash Profit',      color:'#22c55e'},
   ],'₹ Value');
   drawChart(corrCanvas,s,[
-    {key:'correlation',     label:'Correlation',    color:'#f97316'},
-    {key:'dynamicWidthPct', label:'Width% (÷100)',  color:'#a78bfa',scale:0.01},
-    {key:'ilPct',           label:'IL% (÷100)',     color:'#f43f5e',scale:0.01},
+    {key:'correlation',     label:'Correlation',   color:'#f97316'},
+    {key:'dynamicWidthPct', label:'Width% (÷100)', color:'#a78bfa',scale:0.01},
+    {key:'ilPct',           label:'IL% (÷100)',    color:'#f43f5e',scale:0.01},
   ],'−1 → +1');
 }
 
 function drawChart(canvas,data,series,yLabel){
-  const dpr=window.devicePixelRatio||1, rect=canvas.getBoundingClientRect();
+  const dpr=window.devicePixelRatio||1,rect=canvas.getBoundingClientRect();
   canvas.width=rect.width*dpr; canvas.height=rect.height*dpr;
   const ctx=canvas.getContext('2d'); ctx.scale(dpr,dpr);
   const W=rect.width,H=rect.height,P={t:28,r:16,b:46,l:90};
   const cW=W-P.l-P.r,cH=H-P.t-P.b;
   ctx.clearRect(0,0,W,H);
   let yMin=Infinity,yMax=-Infinity;
-  for (const s of series){const sc=s.scale??1;for (const d of data){const v=d[s.key]*sc;if(v<yMin)yMin=v;if(v>yMax)yMax=v;}}
+  for(const s of series){const sc=s.scale??1;for(const d of data){const v=d[s.key]*sc;if(v<yMin)yMin=v;if(v>yMax)yMax=v;}}
   if(!isFinite(yMin))yMin=0;if(!isFinite(yMax))yMax=1;if(yMin===yMax){yMin-=1;yMax+=1;}
   const yRng=yMax-yMin;
   const toX=i=>P.l+(i/(data.length-1))*cW;
@@ -169,7 +175,7 @@ function drawChart(canvas,data,series,yLabel){
     ctx.strokeStyle='rgba(148,163,184,0.09)';ctx.lineWidth=1;
     ctx.beginPath();ctx.moveTo(P.l,yp);ctx.lineTo(P.l+cW,yp);ctx.stroke();
     ctx.fillStyle='rgba(148,163,184,0.6)';ctx.font='10px Arial';ctx.textAlign='right';
-    const lbl=Math.abs(yRng)>50000?`₹${(yv/1e5).toFixed(1)}L`:Math.abs(yRng)>1000?`₹${(yv/1000).toFixed(1)}K`:yv.toFixed(3);
+    const lbl=Math.abs(yRng)>50000?`₹${(yv/1e5).toFixed(1)}L`:Math.abs(yRng)>1000?`₹${(yv/1e3).toFixed(1)}K`:yv.toFixed(3);
     ctx.fillText(lbl,P.l-4,yp+3.5);
   }
   for(let s=0;s<=5;s++){
@@ -203,10 +209,10 @@ function drawChart(canvas,data,series,yLabel){
 function renderTable(){
   if(!state.swaps.length){
     swapCount.classList.add('hidden');
-    swapContainer.innerHTML='<div class="empty-state compact"><h3>No swaps executed</h3><p>Try wider ranges or larger capital.</p></div>';
+    swapContainer.innerHTML='<div class="empty-state compact"><h3>No swaps executed</h3><p>Try tighter width (0.5–1%) or lower brokerage.</p></div>';
     return;
   }
-  const a1=asset1Label.value||'Asset 1', a2=asset2Label.value||'Asset 2';
+  const a1=asset1Label.value||'Asset 1',a2=asset2Label.value||'Asset 2';
   swapCount.textContent=`${state.swaps.length} records`;swapCount.classList.remove('hidden');
   const rows=state.swaps.slice(-500);
   const note=state.swaps.length>500?`<p class="table-note">Showing last 500 of ${state.swaps.length}. Download CSV for full history.</p>`:'';
@@ -215,10 +221,10 @@ function renderTable(){
       <thead><tr>
         <th>Date/Time</th><th>Type</th><th>Mode</th><th>Corr</th><th>Width%</th>
         <th>Action</th>
-        <th>Bought</th><th class="col-num">Shares↑</th><th class="col-num">Cost ₹</th><th class="col-num">Brok↑</th>
-        <th>Sold</th><th class="col-num">Shares↓</th><th class="col-num">Revenue ₹</th><th class="col-num">Brok↓</th>
+        <th>Bought</th><th class="col-num">Shares</th><th class="col-num">Cost ₹</th><th class="col-num">Brok↑</th>
+        <th>Sold</th><th class="col-num">Shares</th><th class="col-num">Revenue ₹</th><th class="col-num">Brok↓</th>
         <th class="col-num">Gross ₹</th><th class="col-num">Net ₹</th><th class="col-num">Cash Accum.</th>
-        <th class="col-num">${a1} Shares</th><th class="col-num">${a2} Shares</th><th class="col-num">IL%</th>
+        <th class="col-num">${a1}</th><th class="col-num">${a2}</th><th class="col-num">IL%</th>
       </tr></thead>
       <tbody>${rows.map(s=>`
         <tr class="${s.isRecenter?'recenter-trade-row':''}">
@@ -226,22 +232,22 @@ function renderTable(){
           <td>${s.isRecenter?'<span class="type-pill recenter">RECENTER</span>':'<span class="type-pill swap">SWAP</span>'}</td>
           <td><span class="mode-pill mode-${s.mode.toLowerCase()}">${s.mode}</span></td>
           <td>${s.rollingCorrelation.toFixed(3)}</td>
-          <td>${s.dynamicWidthPct.toFixed(2)}%</td>
+          <td>${s.dynamicWidthPct.toFixed(3)}%</td>
           <td class="action-cell">${s.action}</td>
           <td>${s.boughtAsset}</td>
           <td class="col-num">${qty(s.boughtQty)}</td>
-          <td class="col-num negative">${inr2.format(s.boughtCost)}</td>
-          <td class="col-num negative">${inr2.format(s.brokerageOnBuy)}</td>
+          <td class="col-num negative">${inr2(s.boughtCost)}</td>
+          <td class="col-num negative">${inr2(s.brokerageOnBuy)}</td>
           <td>${s.soldAsset}</td>
           <td class="col-num">${qty(s.soldQty)}</td>
-          <td class="col-num positive">${inr2.format(s.soldRevenue)}</td>
-          <td class="col-num negative">${inr2.format(s.brokerageOnSell)}</td>
-          <td class="col-num ${s.grossProfit>=0?'positive':'negative'}">${inr2.format(s.grossProfit)}</td>
-          <td class="col-num ${s.netProfit>=0?'positive':'negative'}">${inr2.format(s.netProfit)}</td>
-          <td class="col-num">${inr.format(s.cashProfit)}</td>
+          <td class="col-num positive">${inr2(s.soldRevenue)}</td>
+          <td class="col-num negative">${inr2(s.brokerageOnSell)}</td>
+          <td class="col-num ${s.grossProfit>=0?'positive':'negative'}">${inr2(s.grossProfit)}</td>
+          <td class="col-num ${s.netProfit>=0?'positive':'negative'}">${inr2(s.netProfit)}</td>
+          <td class="col-num">${inr(s.cashProfit)}</td>
           <td class="col-num">${qty(s.poolX)}</td>
           <td class="col-num">${qty(s.poolY)}</td>
-          <td class="col-num ${s.ilPct>=0?'positive':'negative'}">${s.ilPct.toFixed(2)}%</td>
+          <td class="col-num ${s.ilPct>=0?'positive':'negative'}">${s.ilPct.toFixed(3)}%</td>
         </tr>`).join('')}
       </tbody></table></div>`;
 }
@@ -252,17 +258,15 @@ function downloadCsv(rows){
     'SoldAsset','SharesSold','SellRev_INR','BrokerSell_INR',
     'GrossProfit_INR','TotalBrok_INR','NetProfit_INR','CashAccum_INR',
     'Asset1Price','Asset2Price','Asset1Shares','Asset2Shares',
-    'PoolAssetVal_INR','IL_INR','IL_Pct','TotalValue_INR'];
+    'PoolAssetVal_INR','IL_Pct','TotalValue_INR'];
   const lines=[h.join(',')].concat(rows.map(r=>[
     r.date,r.isRecenter?'RECENTER':'SWAP',r.mode,
-    r.rollingCorrelation.toFixed(6),r.dynamicWidthPct.toFixed(4),
-    `"${r.action}"`,
+    r.rollingCorrelation.toFixed(6),r.dynamicWidthPct.toFixed(4),`"${r.action}"`,
     r.boughtAsset,Math.round(r.boughtQty),r.boughtCost.toFixed(2),r.brokerageOnBuy.toFixed(2),
     r.soldAsset,Math.round(r.soldQty),r.soldRevenue.toFixed(2),r.brokerageOnSell.toFixed(2),
-    r.grossProfit.toFixed(2),r.totalBrokerage.toFixed(2),r.netProfit.toFixed(2),r.cashProfit.toFixed(2),
+    r.grossProfit.toFixed(2),r.totalBrokerageRow.toFixed(2),r.netProfit.toFixed(2),r.cashProfit.toFixed(2),
     r.asset1Price,r.asset2Price,Math.round(r.poolX),Math.round(r.poolY),
-    r.poolAssetValue.toFixed(2),(r.poolAssetValue-(state.results?.holdValue||0)).toFixed(2),
-    r.ilPct.toFixed(4),r.totalValue.toFixed(2),
+    r.poolAssetValue.toFixed(2),r.ilPct.toFixed(4),r.totalValue.toFixed(2),
   ].join(',')));
   const blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'});
   const url=URL.createObjectURL(blob);
