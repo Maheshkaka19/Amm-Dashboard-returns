@@ -513,9 +513,26 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   const extremeMult  = clamp(+(config.extremeMult   ?? 5.0), 2, 20); // bypass cooldown multiplier
 
   // Risk controls
-  const buyBrok      = clamp(+(config.buyBrokeragePct  ?? 0.15), 0, 5) / 100;
-  const sellBrok     = clamp(+(config.sellBrokeragePct ?? 0.15), 0, 5) / 100;
-  const ilStopPct    = clamp(+(config.ilStopLossPct    ?? 0), 0, 100);   // 0=disabled
+  const buyBrok           = clamp(+(config.buyBrokeragePct    ?? 0.15), 0, 5) / 100;
+  const sellBrok          = clamp(+(config.sellBrokeragePct   ?? 0.15), 0, 5) / 100;
+
+  // ── IL Stop-Loss with Auto-Resume ─────────────────────────────────────────
+  // ilStopPct    : halt swaps when IL% < -ilStopPct (e.g. -3%). 0 = disabled.
+  // ilResumePct  : resume swaps when IL% recovers above -ilResumePct (e.g. -1%).
+  //                Must be shallower (less negative) than ilStopPct.
+  //                Set 0 to keep halted forever (original behaviour).
+  const ilStopPct         = clamp(+(config.ilStopLossPct   ?? 0), 0, 100); // 0=disabled
+  const ilResumePct       = clamp(+(config.ilResumePct     ?? 0), 0, 100); // 0=no auto-resume
+
+  // ── Alpha-Protection Mode ─────────────────────────────────────────────────
+  // Once cumulative cashProfit exceeds alphaProtectThresholdPct% of deployed
+  // capital, switch to "protect the alpha" mode:
+  //   If unrealized IL (as % of capital) >= current cashRoi%, halt swaps.
+  //   This prevents IL from erasing the alpha gain, locking in net-zero or better.
+  // alphaProtectThresholdPct : minimum cashRoi% before protection activates. 0=always on.
+  const alphaProtectPct   = clamp(+(config.alphaProtectThresholdPct ?? 0), 0, 100); // 0=off
+  const alphaProtectOn    = alphaProtectPct > 0 || config.alphaProtectEnabled === true;
+
   const recenterOn   = config.recenterEnabled !== false;
   const pauseHigh    = !!config.pauseHighVol;
 
@@ -538,7 +555,19 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   let totalSwaps     = 0, recenterCount  = 0, recenterSwaps = 0;
   let grossSwapFees  = 0, swapBrokerage  = 0, successfulSwaps = 0;
   let crystallizedIL = 0;
-  let ilHalted = false, ilHaltedAt = null;
+
+  // ── Stop-Loss / Resume / Alpha-Protection state ───────────────────────────
+  // swapsHalted    : true when swaps are suspended (IL stop or alpha protection)
+  // haltReason     : 'IL_STOP' | 'ALPHA_PROTECT' | null
+  // ilHaltedAt     : timestamp of most recent halt
+  // ilResumedAt    : timestamp of most recent resume (for UI display)
+  // alphaProtected : true when alpha-protection mode has fired at least once
+  let swapsHalted     = false;
+  let haltReason      = null;
+  let ilHaltedAt      = null;
+  let ilResumedAt     = null;
+  let alphaProtected  = false;
+  let haltCount       = 0;  // number of halt/resume cycles (shows pool is dynamic)
   let lastRecenterIdx = -(cooldownHrs + 1);
   const modeHours    = { LOW: 0, MID: 0, HIGH: 0 };
   const regimeHours  = { FAST_REVERT: 0, RANGING: 0, SLOW_REVERT: 0, TRENDING: 0 };
@@ -556,7 +585,7 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
     cashProfit: 0, alphaINR: 0, ilPct: 0,
     zScore: 0, rsi: 50, halfLife: 999, regime: 'RANGING',
     activeWidthPct: baseWidth * 100, atrPct: 0,
-    halted: false,
+    halted: false, haltReason: null,
   });
 
   // ── Hour loop ──────────────────────────────────────────────────────────────
@@ -590,12 +619,48 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
     sumRetRSq += row.retR * row.retR;
     retRCount++;
 
-    // ── §6.2  Dynamic band width ─────────────────────────────────────────────
+    // ── §6.2  Dynamic Concentrated Liquidity Band ────────────────────────────
+    //
+    // True dynamic concentration: the band CENTER and WIDTH both update each hour.
+    //
+    // CENTER ANCHOR strategy (regime-dependent):
+    //   FAST_REVERT / RANGING : center gravitates toward the OU long-run mean μ_OU.
+    //     The ratio is mean-reverting → center the pool near where it will return.
+    //     This reduces IL because the pool is pre-positioned for reversion.
+    //   SLOW_REVERT / TRENDING : center stays at current price (ext).
+    //     The ratio is drifting → don't fight the trend; follow it.
+    //
+    // WIDTH strategy:
+    //   Layer 1: base × regime multiplier (FAST_REVERT tighter, TRENDING wider)
+    //   Layer 2: × corr factor (low correlation → wider to absorb divergence)
+    //   Layer 3: ATR floor (never narrower than atrMult × ATR14, prevents churn)
+    //
+    // This replaces the static-center approach: the pool is now truly concentrated
+    // around the statistically expected price, not an arbitrary fixed point.
 
-    // Three-layer width:
-    // Layer 1: regime multiplier on base width
-    // Layer 2: correlation adjustment (low corr → wider band)
-    // Layer 3: ATR floor (never narrower than typical noise)
+    // OU long-run mean in ratio space (from log-OU fit, back-transform)
+    // We use the 96h window's OLS intercept: μ_log = -a/b
+    let ouMeanRatio = center; // fallback: current center
+    if (ouWin.length >= 4) {
+      const n = ouWin.length;
+      let sx=0, sy=0, sxy=0, sx2=0;
+      for (let i=0; i<n-1; i++){const xv=ouWin[i],yv=ouWin[i+1]-ouWin[i];sx+=xv;sy+=yv;sxy+=xv*yv;sx2+=xv*xv;}
+      const m=n-1, denom=m*sx2-sx*sx;
+      if (Math.abs(denom)>1e-14){
+        const b=(m*sxy-sx*sy)/denom, a=(sy-b*sx)/m;
+        if (b<0) ouMeanRatio = Math.exp(-a/b); // log-OU long-run mean, back to ratio space
+      }
+    }
+    // Clamp ouMeanRatio to ±20% of current price (sanity guard)
+    ouMeanRatio = clamp(ouMeanRatio, ext * 0.80, ext * 1.20);
+
+    // Dynamic center: blend toward OU mean in RANGING/FAST_REVERT, stay at ext in TRENDING
+    const meanBlend = regime === 'FAST_REVERT' ? 0.7
+                    : regime === 'RANGING'      ? 0.5
+                    : regime === 'SLOW_REVERT'  ? 0.2
+                    : 0.0; // TRENDING: ignore OU mean, use current price
+    const dynamicCenter = ouMeanRatio * meanBlend + ext * (1 - meanBlend);
+
     const corrFactor  = 1 + 0.5 * (1 - Math.abs(corr));
     const baseBand    = baseWidth * rp.widthMult * corrFactor;
     const atrFloor    = atrMult  * atr;
@@ -608,15 +673,75 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
     const activeCooldown = Math.round(cooldownHrs * rp.cooldownMult);
 
     // ── §6.3  Band / drift check ──────────────────────────────────────────────
-    const drift  = Math.abs(ext / center - 1);
+    // Drift is measured from the DYNAMIC center (OU-anchored), not a static point.
+    // This means the band moves toward where the ratio "should" be, concentrating
+    // liquidity at the statistically-optimal price level every hour.
+    const drift  = Math.abs(ext / dynamicCenter - 1);
     const inBand = drift <= activeW;
 
-    // ── §6.4  Volume mode (for pauseHigh) ────────────────────────────────────
+    // ── §6.4  Volume mode ─────────────────────────────────────────────────────
     const currentMode = volMode(row.vol, volWin, sigmaT);
     const pauseThisHour = pauseHigh && currentMode === 'HIGH';
 
-    // ── §6.5  RECENTER ────────────────────────────────────────────────────────
-    if (!inBand && !ilHalted && recenterOn && !pauseThisHour) {
+    // ── §6.5  IL STOP-LOSS + AUTO-RESUME + ALPHA-PROTECTION ──────────────────
+    //
+    // Computed every hour BEFORE any trading decision so all gates see the same state.
+    //
+    // IL metrics:
+    const pvNow  = x * p1 + y * p2;
+    const hvNow  = xInit * p1 + yInit * p2;
+    const ilPctNow = hvNow > 0 ? (pvNow / hvNow - 1) * 100 : 0;
+    // Cash ROI as % of deployed capital (excludes pool asset value drift)
+    const cashRoiNow = initCashDeployed > 0 ? cashProfit / initCashDeployed * 100 : 0;
+
+    // ── AUTO-RESUME: if halted and IL has recovered above ilResumePct, resume ─
+    if (swapsHalted && haltReason === 'IL_STOP' && ilResumePct > 0) {
+      // Resume when IL is no longer worse than -ilResumePct
+      // (ilResumePct should be shallower/smaller than ilStopPct)
+      if (ilPctNow >= -ilResumePct) {
+        swapsHalted  = false;
+        haltReason   = null;
+        ilResumedAt  = row.date.toISOString();
+        // Note: we do NOT reset haltCount — it tracks total cycles
+      }
+    }
+
+    // ── ALPHA-PROTECTION RESUME: if IL recovers above the protection level ────
+    if (swapsHalted && haltReason === 'ALPHA_PROTECT') {
+      // Resume when unrealized IL is smaller than cashRoi (alpha is safe again)
+      if (cashRoiNow > 0 && Math.abs(ilPctNow) < cashRoiNow) {
+        swapsHalted = false;
+        haltReason  = null;
+        ilResumedAt = row.date.toISOString();
+      }
+    }
+
+    // ── HALT CHECKS (only when currently trading) ─────────────────────────────
+    if (!swapsHalted) {
+      // 1. Basic IL stop-loss
+      if (ilStopPct > 0 && ilPctNow < -ilStopPct) {
+        swapsHalted = true;
+        haltReason  = 'IL_STOP';
+        ilHaltedAt  = row.date.toISOString();
+        haltCount++;
+      }
+      // 2. Alpha-protection: halt when IL threatens to erase accumulated alpha
+      //    Condition: cashRoi has crossed alphaProtectPct threshold AND
+      //               |ilPct| >= cashRoi (pool loss would cancel out the cash gain)
+      if (!swapsHalted && alphaProtectOn
+          && cashRoiNow >= alphaProtectPct
+          && ilPctNow < 0
+          && Math.abs(ilPctNow) >= cashRoiNow) {
+        swapsHalted    = true;
+        haltReason     = 'ALPHA_PROTECT';
+        alphaProtected = true;
+        ilHaltedAt     = row.date.toISOString();
+        haltCount++;
+      }
+    }
+
+    // ── §6.6  RECENTER ────────────────────────────────────────────────────────
+    if (!inBand && !swapsHalted && recenterOn && !pauseThisHour) {
       const hrsSince = idx - lastRecenterIdx;
       const extreme  = drift > activeW * extremeMult;
       const canRecenter = hrsSince >= activeCooldown || extreme;
@@ -644,9 +769,9 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
         }
         center = ext; lastRecenterIdx = idx; recenterCount++;
 
-        const pvAfter = x * p1 + y * p2;
-        const hvAfter = xInit * p1 + yInit * p2;
-        const ilPct   = hvAfter > 0 ? (pvAfter / hvAfter - 1) * 100 : 0;
+        const pvAfter        = x * p1 + y * p2;
+        const hvAfter        = xInit * p1 + yInit * p2;
+        const ilPctAfterRec  = hvAfter > 0 ? (pvAfter / hvAfter - 1) * 100 : 0;
 
         swapRecords.push({
           date: row.date.toISOString(),
@@ -664,63 +789,43 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
           brokerageOnSell: sellBrok * rec.revenue, totalBrokerageRow: rec.brok,
           netProfit: rec.net, cashProfit,
           asset1Price: p1, asset2Price: p2, poolX: x, poolY: y,
-          poolAssetValue: pvAfter, ilPct, crystallizedILAtRecenter: ilHere,
+          poolAssetValue: pvAfter, ilPct: ilPctAfterRec,
+          crystallizedILAtRecenter: ilHere,
           totalValue: pvAfter + cashProfit,
+          haltReason,
         });
-
-        if (ilStopPct > 0 && ilPct < -ilStopPct) {
-          ilHalted = true; ilHaltedAt = row.date.toISOString();
-        }
 
         equityCurve.push({
           date: row.date.toISOString(),
           poolValue: pvAfter + cashProfit, holdValue: hvAfter,
           cashProfit, alphaINR: pvAfter + cashProfit - hvAfter,
-          ilPct, zScore, rsi: rsiVal, halfLife, regime,
+          ilPct: ilPctAfterRec, zScore, rsi: rsiVal, halfLife, regime,
           activeWidthPct: activeW * 100, atrPct: atr * 100,
-          halted: ilHalted,
+          halted: swapsHalted, haltReason,
         });
         continue;
       }
     }
 
-    // ── §6.6  DUAL-SIGNAL ENTRY GATE ──────────────────────────────────────────
-    //
-    // SIGNAL 1 — Z-Score: ratio is statistically overextended
-    //   z > +threshold → ratio HIGH → sell Asset1, buy Asset2 (expect ratio to fall)
-    //   z < -threshold → ratio LOW  → buy Asset1, sell Asset2 (expect ratio to rise)
-    //
-    // SIGNAL 2 — RSI: momentum confirms overextension
-    //   RSI > rsiOB (70) → momentum confirms HIGH (overbought)
-    //   RSI < rsiOS (30) → momentum confirms LOW  (oversold)
-    //
-    // SIGNAL 3 — Regime gate: only trade when OU regime allows it
-    //   TRENDING regime with |Z| < 3: no trade (trend continuation likely)
-    //
-    // All three signals must be satisfied simultaneously.
-    // This precision is why we achieve 100% success rate on profitable swaps.
-
+    // ── §6.7  DUAL-SIGNAL ENTRY GATE ──────────────────────────────────────────
     const signalLong  = zScore < -zThreshold && rsiVal < rsiOS && rp.allowTrade;
     const signalShort = zScore > +zThreshold && rsiVal > rsiOB && rp.allowTrade;
     const hasSignal   = inBand && (signalLong || signalShort);
 
     if (!hasSignal) {
-      const pv = x*p1+y*p2, hv = xInit*p1+yInit*p2;
       equityCurve.push({
         date: row.date.toISOString(),
-        poolValue: pv+cashProfit, holdValue: hv,
-        cashProfit, alphaINR: pv+cashProfit-hv,
-        ilPct: hv>0?(pv/hv-1)*100:0, zScore, rsi: rsiVal, halfLife, regime,
-        activeWidthPct: activeW*100, atrPct: atr*100, halted: ilHalted,
+        poolValue: pvNow+cashProfit, holdValue: hvNow,
+        cashProfit, alphaINR: pvNow+cashProfit-hvNow,
+        ilPct: ilPctNow, zScore, rsi: rsiVal, halfLife, regime,
+        activeWidthPct: activeW*100, atrPct: atr*100,
+        halted: swapsHalted, haltReason,
       });
-      if (ilStopPct>0 && hv>0 && (x*p1+y*p2)/hv-1<-ilStopPct/100 && !ilHalted) {
-        ilHalted=true; ilHaltedAt=row.date.toISOString();
-      }
       continue;
     }
 
-    // ── §6.7  EXECUTE SWAP ────────────────────────────────────────────────────
-    if (!ilHalted && !pauseThisHour) {
+    // ── §6.8  EXECUTE SWAP ────────────────────────────────────────────────────
+    if (!swapsHalted && !pauseThisHour) {
       const sw = computeSwap(x, y, p1, p2, buyBrok, sellBrok, activeBuf);
 
       if (sw) {
@@ -734,8 +839,8 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
 
         const bA = sw.dir==='BUY1_SELL2' ? 'Asset 1' : 'Asset 2';
         const sA = sw.dir==='BUY1_SELL2' ? 'Asset 2' : 'Asset 1';
-        const pv = x*p1+y*p2, hv = xInit*p1+yInit*p2;
-        const ilPct = hv>0?(pv/hv-1)*100:0;
+        const pvSw = x*p1+y*p2, hvSw = xInit*p1+yInit*p2;
+        const ilPctSw = hvSw>0?(pvSw/hvSw-1)*100:0;
 
         swapRecords.push({
           date: row.date.toISOString(),
@@ -750,28 +855,22 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
           brokerageOnSell: sellBrok*sw.revenue, totalBrokerageRow: sw.brok,
           netProfit: sw.net, cashProfit,
           asset1Price: p1, asset2Price: p2, poolX: x, poolY: y,
-          poolAssetValue: pv, ilPct, crystallizedILAtRecenter: null,
-          totalValue: pv+cashProfit,
+          poolAssetValue: pvSw, ilPct: ilPctSw, crystallizedILAtRecenter: null,
+          totalValue: pvSw+cashProfit, haltReason,
         });
-
-        if (ilStopPct>0 && ilPct < -ilStopPct && !ilHalted) {
-          ilHalted=true; ilHaltedAt=row.date.toISOString();
-        }
       }
     }
 
-    // Equity snapshot
-    const pv = x*p1+y*p2, hv = xInit*p1+yInit*p2;
-    const ilPct = hv>0?(pv/hv-1)*100:0;
-    if (ilStopPct>0 && ilPct < -ilStopPct && !ilHalted) {
-      ilHalted=true; ilHaltedAt=row.date.toISOString();
-    }
+    // Equity snapshot (every hour, traded or not)
+    const pvEnd = x*p1+y*p2, hvEnd = xInit*p1+yInit*p2;
     equityCurve.push({
       date: row.date.toISOString(),
-      poolValue: pv+cashProfit, holdValue: hv,
-      cashProfit, alphaINR: pv+cashProfit-hv,
-      ilPct, zScore, rsi: rsiVal, halfLife, regime,
-      activeWidthPct: activeW*100, atrPct: atr*100, halted: ilHalted,
+      poolValue: pvEnd+cashProfit, holdValue: hvEnd,
+      cashProfit, alphaINR: pvEnd+cashProfit-hvEnd,
+      ilPct: hvEnd>0?(pvEnd/hvEnd-1)*100:0,
+      zScore, rsi: rsiVal, halfLife, regime,
+      activeWidthPct: activeW*100, atrPct: atr*100,
+      halted: swapsHalted, haltReason,
     });
   }
 
@@ -794,7 +893,8 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
     holdRoi:  initCashDeployed>0 ? (holdValue/initCashDeployed-1)*100  : 0,
     cashRoi:  initCashDeployed>0 ? cashProfit/initCashDeployed*100     : 0,
     brokRoi:  initCashDeployed>0 ? totalBrokerage/initCashDeployed*100 : 0,
-    ilINR, ilPct, ilHalted, ilHaltedAt,
+    ilINR, ilPct, ilHalted: swapsHalted, ilHaltedAt, ilResumedAt,
+    haltReason, haltCount, alphaProtected,
     crystallizedIL, unrealizedIL: ilINR,
     totalSwaps, recenterSwaps, recenterCount,
     successfulSwaps, grossSwapFees,

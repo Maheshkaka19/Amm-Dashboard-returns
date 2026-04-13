@@ -51,6 +51,9 @@ function getConfig(){
     sigmaThreshold: +sigmaInput.value, lookbackHours:+volLBInput.value,
     pauseHighVol:   pauseHighInput.checked, recenterEnabled:recenterOnInput.checked,
     ilStopLossPct:  +ilStopInput.value,
+    ilResumePct:    +($('ilResumePct')?.value ?? 0),
+    alphaProtectThresholdPct: +($('alphaProtectPct')?.value ?? 0),
+    alphaProtectEnabled: !!($('alphaProtectEnabled')?.checked),
   };
 }
 
@@ -86,9 +89,39 @@ async function handleRun(){
 
 function renderIlBanner(){
   const r=state.results;
-  if(!r?.ilHalted){ilBanner.classList.add('hidden');return;}
-  ilBanner.className='il-banner halted';
-  ilBanner.innerHTML=`<span class="il-icon">⛔</span><div><strong>IL Stop-Loss Triggered</strong><span>Halted at ${new Date(r.ilHaltedAt).toLocaleString('en-IN')} — IL exceeded −${(+ilStopInput.value).toFixed(1)}%.</span></div>`;
+  ilBanner.classList.add('hidden');
+  if (!r) return;
+
+  // Build banner content based on current halt state
+  const halted   = r.ilHalted;
+  const reason   = r.haltReason;
+  const resumed  = r.ilResumedAt;
+  const protected_ = r.alphaProtected;
+  const cycles   = r.haltCount || 0;
+
+  // Build a combined status message
+  const lines = [];
+  if (halted) {
+    if (reason === 'IL_STOP') {
+      lines.push(`<strong>⛔ IL Stop-Loss Active</strong>`);
+      lines.push(`Swaps halted at ${new Date(r.ilHaltedAt).toLocaleString('en-IN')} — IL exceeded −${(+ilStopInput.value).toFixed(1)}%. Will auto-resume when IL recovers above −${(+($('ilResumePct')?.value??0)).toFixed(1)}%.`);
+    } else if (reason === 'ALPHA_PROTECT') {
+      lines.push(`<strong>🛡️ Alpha Protection Active</strong>`);
+      lines.push(`Swaps halted — unrealized IL has reached the accumulated alpha level. Net-zero position protected. Resumes when IL reduces below current cash ROI.`);
+    }
+  }
+  if (!halted && resumed) {
+    lines.push(`<strong>✅ Swaps Resumed</strong>`);
+    lines.push(`Last resumed at ${new Date(resumed).toLocaleString('en-IN')}.${cycles > 1 ? ` (${cycles} halt/resume cycles — pool is dynamically self-protecting)` : ''}`);
+  }
+  if (protected_ && !halted) {
+    lines.push(`<strong>🛡️ Alpha Protection has fired ${cycles}× this run.</strong> Net-alpha preserved.`);
+  }
+
+  if (!lines.length) return;
+
+  ilBanner.className = `il-banner ${halted ? 'halted' : 'resumed'}`;
+  ilBanner.innerHTML = `<span class="il-icon">${halted ? (reason==='ALPHA_PROTECT'?'🛡️':'⛔') : '✅'}</span><div>${lines.map(l=>`<span class="il-line">${l}</span>`).join('')}</div>`;
   ilBanner.classList.remove('hidden');
 }
 
@@ -120,7 +153,8 @@ function renderMetrics(){
     {label:`Final ${a2}`,              value:qty(r.finalY),              delta:null},
     {label:'Ratio Realised Vol (ann)',  value:`${dec((r.realizedVolOfRatio||0)*100,1)}%`,delta:null},
     {label:'Regime hrs F/R/S/T',       value:`${rg.FAST_REVERT||0}/${rg.RANGING||0}/${rg.SLOW_REVERT||0}/${rg.TRENDING||0}`,delta:null},
-    {label:'IL Stop-Loss Hit',         value:r.ilHalted?'⛔ Yes':'✅ No',delta:null},
+    {label:'IL Stop-Loss Hit',         value:r.ilHalted ? `⛔ Active (${r.haltCount} cycle${r.haltCount!==1?'s':''})` : r.haltCount>0 ? `✅ Resumed (${r.haltCount}×)` : '✅ Never fired', delta:null},
+    {label:'Alpha Protection Fired',   value:r.alphaProtected ? `🛡️ Yes (${r.haltCount}×)` : '—', delta:null},
   ];
   metricsGrid.innerHTML=cards.map(({label,value,delta,positive,hl})=>`
     <div class="metric-card${hl?' metric-highlight':''}">
