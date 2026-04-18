@@ -3,233 +3,218 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>AMM Alpha Guardian v9 — Volatility Harvesting</title>
+  <title>Concentrated Liquidity Pool — NSE AMM</title>
   <link rel="stylesheet" href="/styles.css"/>
 </head>
 <body>
-<main class="page-shell">
+<main class="shell">
+
+  <!-- ── SIDEBAR ──────────────────────────────────────────────────────────── -->
   <aside class="sidebar">
-    <div class="sidebar-top">
-      <p class="eyebrow">Alpha Guardian v9 · Z-Score + RSI + OU Regime · 100% Swap Success</p>
-      <h1>AMM Volatility Harvesting</h1>
+
+    <div class="brand">
+      <p class="eyebrow">Static Concentrated Pool · NSE · x·y=k</p>
+      <h1>AMM Pool Manager</h1>
       <p class="lede">
-        Trades ONLY when Z-Score AND RSI simultaneously confirm mean-reversion
-        overextension. Ornstein-Uhlenbeck half-life classifies regime in real time.
-        Result on RELIANCE/KOTAK: <strong>100% swap success rate, Sharpe 2.0, α +0.85%</strong>.
+        Upload two stock CSVs. The pool earns the spread every time the
+        price ratio oscillates inside the concentration band. Set your
+        stop-loss and alpha-protection levels to control downside.
       </p>
     </div>
 
-    <section class="panel">
-      <h2>Upload Datasets</h2>
-      <label class="upload-zone"><span id="asset1FileName">Upload Asset 1 CSV</span><input id="asset1File" type="file" accept=".csv,text/csv"/></label>
-      <label>Asset 1 Label <input id="asset1Label" value="Reliance"/></label>
-      <label class="upload-zone" style="margin-top:7px"><span id="asset2FileName">Upload Asset 2 CSV</span><input id="asset2File" type="file" accept=".csv,text/csv"/></label>
-      <label>Asset 2 Label <input id="asset2Label" value="Kotak Bank"/></label>
-      <button id="runSimulation" class="primary-button">▶ Run Simulation</button>
+    <!-- Upload -->
+    <section class="card">
+      <h2>Datasets</h2>
+      <label class="upload">
+        <span id="asset1FileName">Upload Asset 1 — 1-min CSV</span>
+        <input id="asset1File" type="file" accept=".csv,text/csv"/>
+      </label>
+      <label class="field" style="margin-top:6px">
+        Label <input id="asset1Label" type="text" value="Reliance"/>
+      </label>
+      <label class="upload" style="margin-top:8px">
+        <span id="asset2FileName">Upload Asset 2 — 1-min CSV</span>
+        <input id="asset2File" type="file" accept=".csv,text/csv"/>
+      </label>
+      <label class="field" style="margin-top:6px">
+        Label <input id="asset2Label" type="text" value="Kotak Bank"/>
+      </label>
+      <button id="runSimulation" class="btn-primary">▶ Run Simulation</button>
     </section>
 
-    <section class="panel">
-      <h2>Capital &amp; Brokerage</h2>
-      <label>Total Capital (₹) <input id="realCapital" type="number" min="0" step="100000" value="2000000"/></label>
-      <div class="two-col">
-        <label>Buy Brok (%) <input id="buyBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/></label>
-        <label>Sell Brok (%) <input id="sellBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/></label>
+    <!-- Capital -->
+    <section class="card">
+      <h2>Capital</h2>
+      <label class="field">Total Capital (₹)
+        <input id="realCapital" type="number" min="10000" step="100000" value="2000000"/>
+      </label>
+      <p class="hint">Split 50 / 50 between the two assets at open price. Rounded to whole shares.</p>
+    </section>
+
+    <!-- Concentration -->
+    <section class="card card-blue">
+      <h2>🎯 Concentration Band</h2>
+      <label class="field">Half-width ± (%)
+        <input id="concentrationPct" type="number" min="0.1" max="50" step="0.1" value="2.0"/>
+      </label>
+      <label class="field" style="margin-top:8px">Recenter cooldown (hours)
+        <input id="recenterCooldownHrs" type="number" min="1" max="168" step="1" value="24"/>
+      </label>
+      <label class="checkbox">
+        <input id="recenterEnabled" type="checkbox" checked/>
+        Enable automatic recentering
+      </label>
+      <div class="info-box">
+        <strong>Tighter band</strong> (0.5–1%) → more swaps, lower IL per trade,
+        more recenters needed. <strong>Wider band</strong> (3–5%) → fewer recenters,
+        larger IL spikes, fewer swaps. Cooldown prevents back-to-back recenters
+        in choppy markets.
       </div>
     </section>
 
-    <section class="panel panel-gold">
-      <h2>🎯 Dual-Signal Entry System</h2>
-      <div class="signal-explainer">
-        <div class="signal-item">
-          <span class="sig-badge sig-z">Z</span>
-          <div><strong>Z-Score Gate</strong><p>Ratio must be > threshold σ away from its 48h mean. Identifies statistical overextension.</p></div>
-        </div>
-        <div class="signal-item">
-          <span class="sig-badge sig-r">RSI</span>
-          <div><strong>RSI Confirmation</strong><p>Momentum must confirm: RSI&gt;70 (overbought) or RSI&lt;30 (oversold). Independent validation.</p></div>
-        </div>
-        <div class="signal-item">
-          <span class="sig-badge sig-ou">OU</span>
-          <div><strong>OU Regime Gate</strong><p>OU half-life classifies mean-reversion speed. TRENDING regime (halfLife&gt;1 week) suppresses trading.</p></div>
-        </div>
-      </div>
-      <div class="two-col" style="margin-top:8px">
-        <label>Z-Score Threshold <input id="zThreshold" type="number" min="0.5" max="4" step="0.1" value="1.5"/></label>
-        <label>Z Lookback (hrs) <input id="zLookback" type="number" min="12" max="240" step="4" value="48"/></label>
-      </div>
+    <!-- Brokerage -->
+    <section class="card">
+      <h2>Brokerage</h2>
       <div class="two-col">
-        <label>RSI Period (hrs) <input id="rsiPeriod" type="number" min="5" max="50" step="1" value="14"/></label>
-        <label>OU Lookback (hrs) <input id="ouLookback" type="number" min="24" max="500" step="12" value="96"/></label>
+        <label class="field">Buy (%)
+          <input id="buyBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
+        </label>
+        <label class="field">Sell (%)
+          <input id="sellBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
+        </label>
       </div>
-      <div class="two-col">
-        <label>RSI Overbought <input id="rsiOverbought" type="number" min="55" max="95" step="1" value="70"/></label>
-        <label>RSI Oversold <input id="rsiOversold" type="number" min="5" max="45" step="1" value="30"/></label>
-      </div>
-      <p class="hint">Only trades when ALL three signals agree simultaneously. Higher Z-threshold = fewer but higher-quality trades.</p>
+      <p class="hint">Zerodha / NSE standard: 0.15% + 0.15% = 0.30% round-trip. A swap only executes when net profit exceeds zero after brokerage.</p>
     </section>
 
-    <section class="panel">
-      <h2>📐 ATR Band Sizing</h2>
-      <div class="two-col">
-        <label>Base Width (%) <input id="baseWidth" type="number" min="0.1" step="0.1" value="2.0"/></label>
-        <label>ATR Mult <input id="atrMultiplier" type="number" min="0.5" max="20" step="0.1" value="2.5"/></label>
-      </div>
-      <label>ATR Period (hrs) <input id="atrPeriod" type="number" min="4" step="1" value="14"/></label>
-      <p class="hint">Active width = max(ATR×mult, base). Regime multiplier: FAST_REVERT×0.6, RANGING×1, SLOW_REVERT×1.8, TRENDING×3.</p>
-    </section>
-
-    <section class="panel">
-      <h2>🛡️ Anti-Churn &amp; Risk</h2>
-      <div class="two-col">
-        <label>Profit Buffer× <input id="profitBuffer" type="number" min="0" max="10" step="0.1" value="1.0"/></label>
-        <label>Cooldown (hrs) <input id="cooldownHours" type="number" min="1" max="168" step="4" value="48"/></label>
-      </div>
-      <label>Emergency Mult× <input id="extremeMult" type="number" min="2" max="20" step="0.5" value="5.0"/></label>
-      <label class="checkbox-label"><input id="pauseHighVol" type="checkbox"/> Pause in HIGH-vol hours</label>
-      <label class="checkbox-label"><input id="recenterEnabled" type="checkbox" checked/> Enable recentering</label>
-    </section>
-
-    <section class="panel panel-danger">
+    <!-- IL Stop-Loss -->
+    <section class="card card-red">
       <h2>🛑 IL Stop-Loss &amp; Auto-Resume</h2>
       <div class="two-col">
-        <label>Stop (IL %) — halt when IL drops below
-          <input id="ilStopLossPct" type="number" min="0" max="100" step="0.5" value="3"/>
-          <span class="field-hint">e.g. 3 → halt when IL &lt; −3%</span>
+        <label class="field">Stop at IL (%)
+          <input id="ilStopLossPct" type="number" min="0" max="100" step="0.5" value="3.0"/>
+          <span class="sub-hint">0 = disabled</span>
         </label>
-        <label>Resume (IL %) — restart when IL recovers above
-          <input id="ilResumePct" type="number" min="0" max="100" step="0.5" value="1"/>
-          <span class="field-hint">e.g. 1 → resume when IL &gt; −1%. Set 0 = no auto-resume</span>
+        <label class="field">Resume at IL (%)
+          <input id="ilResumePct" type="number" min="0" max="100" step="0.5" value="1.0"/>
+          <span class="sub-hint">0 = no resume</span>
         </label>
       </div>
-      <p class="hint">
-        <strong>Stop:</strong> Swaps halt the moment unrealized IL falls below −Stop%.
-        <strong>Resume:</strong> Swaps automatically restart when IL recovers above −Resume%.
-        This creates a dynamic halt/resume cycle — the pool self-protects and
-        re-enters when conditions improve.
-        Set both to 0 to disable entirely.
-      </p>
+      <div class="flow-strip">
+        <div class="fs-box run">Trading</div>
+        <div class="fs-arr">→</div>
+        <div class="fs-box stop">IL &lt; −Stop%</div>
+        <div class="fs-arr">→</div>
+        <div class="fs-box wait">Paused</div>
+        <div class="fs-arr">→</div>
+        <div class="fs-box go">IL &gt; −Resume%</div>
+        <div class="fs-arr">→</div>
+        <div class="fs-box run">Trading</div>
+      </div>
+      <p class="hint">Pool halts swaps the moment IL falls below −Stop%. Automatically restarts when IL recovers above −Resume%. Set both 0 to run without protection.</p>
     </section>
 
-    <section class="panel panel-protect">
+    <!-- Alpha Protection -->
+    <section class="card card-purple">
       <h2>🛡️ Alpha-Protection Mode</h2>
-      <label class="checkbox-label">
+      <label class="checkbox">
         <input id="alphaProtectEnabled" type="checkbox" checked/>
-        Enable Alpha-Protection (recommended)
+        Enable alpha protection
       </label>
-      <label>Activate after cash ROI crosses (%)
-        <input id="alphaProtectPct" type="number" min="0" max="50" step="0.1" value="0.3"/>
-        <span class="field-hint">Protection fires after accumulated cash profit exceeds this % of capital</span>
+      <label class="field" style="margin-top:8px">Activate after cash ROI reaches (%)
+        <input id="alphaProtectThresholdPct" type="number" min="0" max="50" step="0.1" value="0.3"/>
+        <span class="sub-hint">0 = protect from very first hour</span>
       </label>
-      <div class="protect-explainer">
-        <div class="protect-row">
-          <span class="protect-step">①</span>
-          <span>Swaps run normally until cash profit ≥ Activate threshold (e.g. 0.3% of capital)</span>
+      <div class="protect-flow">
+        <div class="pf-row">
+          <span class="pf-num">①</span>
+          <span>Cash profit grows until it crosses the Activate threshold</span>
         </div>
-        <div class="protect-row">
-          <span class="protect-step">②</span>
-          <span>Protection activates: monitor whether <em>|IL%| ≥ cash ROI%</em></span>
+        <div class="pf-row">
+          <span class="pf-num">②</span>
+          <span>Protection active — monitor whether <em>|IL%| ≥ Cash ROI%</em></span>
         </div>
-        <div class="protect-row">
-          <span class="protect-step">③</span>
-          <span>If IL would erase the alpha → halt swaps. Total Value ≈ Hold Value (net zero)</span>
+        <div class="pf-row">
+          <span class="pf-num">③</span>
+          <span>If IL threatens to erase alpha → halt. Total value ≈ hold (net zero)</span>
         </div>
-        <div class="protect-row">
-          <span class="protect-step">④</span>
-          <span>If IL shrinks back below cash ROI → auto-resume. Harvest continues</span>
+        <div class="pf-row">
+          <span class="pf-num">④</span>
+          <span>When IL retreats below Cash ROI → resume harvesting</span>
         </div>
-      </div>
-      <p class="hint" style="margin-top:8px">
-        This guarantees the strategy never finishes <em>below</em> hold value once
-        alpha has been captured. Set Activate to 0 to run protection from the very first hour.
-      </p>
-    </section>
-
-    <section class="panel">
-      <h2>Volume Regime</h2>
-      <div class="two-col">
-        <label>Sigma (σ) <input id="sigmaThreshold" type="number" min="0.1" step="0.1" value="1.0"/></label>
-        <label>Lookback (hrs) <input id="lookbackHours" type="number" min="2" step="1" value="24"/></label>
       </div>
     </section>
 
-    <section class="panel ceiling-panel">
-      <h2>📊 Alpha Ceiling — Mathematical Reality</h2>
-      <div class="ceiling-grid">
-        <div class="ceiling-row">
-          <span>Structural ceil. RELIANCE/KOTAK</span><strong>~1% / year</strong>
-        </div>
-        <div class="ceiling-row">
-          <span>To reach 5%: pick pairs with σ_ratio</span><strong>&gt; 50% annual</strong>
-        </div>
-        <div class="ceiling-row">
-          <span>To reach 10%: run N pools</span><strong>N × pair alpha</strong>
-        </div>
-        <div class="ceiling-row">
-          <span>Inst. brokerage (&lt;0.05%) allows</span><strong>3-5× more trades</strong>
-        </div>
-      </div>
-      <p class="hint" style="margin-top:8px">
-        Formula: Expected_alpha = ½σ²_ratio × Capital − N × brokerage × notional.
-        For large-cap Indian stocks with 0.30% NSE brokerage, the structural ceiling
-        is ~1% per pair per year. This is NOT a code limitation — it's arithmetic.
-        The Alpha Guardian maximises capture toward that ceiling with Sharpe &gt; 2.
-      </p>
-    </section>
-
-    <section class="panel small">
+    <!-- CSV format -->
+    <section class="card card-flat">
       <h2>CSV Format</h2>
       <ul>
         <li><code>date</code> — <code>2025-01-01 09:15:00+05:30</code></li>
         <li><code>close</code> — price in ₹</li>
         <li><code>volume</code> — trade volume</li>
+        <li>1-minute bars are merged to hourly last-close automatically</li>
       </ul>
     </section>
+
   </aside>
 
+  <!-- ── CONTENT ───────────────────────────────────────────────────────────── -->
   <section class="content">
-    <div id="statusBanner" class="status-banner info">
-      <strong>INFO:</strong> <span>Upload two 1-minute CSVs and click Run Simulation.</span>
-    </div>
-    <div id="ilBanner" class="il-banner hidden"></div>
 
-    <div class="panel">
-      <div class="panel-header">
-        <div><p class="eyebrow">Results — Net Alpha</p><h2 id="pairHeading">Reliance ↔ Kotak Bank</h2></div>
-        <button id="downloadCsv" class="secondary-button hidden">⬇ CSV</button>
+    <div id="statusBanner" class="status-banner status-info">
+      <strong>INFO:</strong> <span>Upload two 1-minute CSV files and click Run Simulation.</span>
+    </div>
+
+    <div id="haltBanner" class="halt-banner hidden"></div>
+
+    <!-- Results -->
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">Results</p>
+          <h2 id="pairHeading">Reliance  ↔  Kotak Bank</h2>
+        </div>
+        <button id="downloadCsv" class="btn-secondary hidden">⬇ Download CSV</button>
       </div>
-      <div id="metricsGrid" class="metric-grid"><div class="empty-state"><h3>No results yet</h3></div></div>
+      <div id="metricsGrid" class="metric-grid">
+        <div class="empty-state"><p>Upload CSV files and run the simulation.</p></div>
+      </div>
     </div>
 
-    <div class="panel">
-      <div class="panel-header"><div>
-        <p class="eyebrow">Institutional Performance Summary</p>
-        <h2>Harvest · Drawdown · Success Rate · IL · Sharpe</h2>
+    <!-- Performance -->
+    <div class="card">
+      <div class="card-head"><div>
+        <p class="eyebrow">Performance Summary</p>
+        <h2>Harvest · Risk · Quality · IL</h2>
       </div></div>
-      <div id="perfSummaryPanel"><div class="empty-state compact"><h3>Run simulation first</h3></div></div>
+      <div id="perfPanel"><div class="empty-state"><p>Run simulation first.</p></div></div>
     </div>
 
-    <div class="panel">
-      <div class="panel-header"><div><p class="eyebrow">Performance</p><h2>AMM Value · Hold · Cash Profit</h2></div></div>
+    <!-- Charts -->
+    <div class="card">
+      <div class="card-head"><div>
+        <p class="eyebrow">Portfolio Value</p>
+        <h2>AMM Total Value · Hold · Cash Profit — red shading = halted</h2>
+      </div></div>
       <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
     </div>
 
-    <div class="panel">
-      <div class="panel-header"><div><p class="eyebrow">Net Alpha Curve</p><h2>Alpha ₹ vs Hold over time · Yellow = trade signals fired</h2></div></div>
+    <div class="card">
+      <div class="card-head"><div>
+        <p class="eyebrow">Alpha &amp; IL</p>
+        <h2>Net Alpha ₹ vs Hold · IL% (scaled ÷10) — red shading = halted</h2>
+      </div></div>
       <div class="chart-wrap"><canvas id="alphaChart"></canvas></div>
     </div>
 
-    <div class="panel">
-      <div class="panel-header"><div><p class="eyebrow">Live Signals</p><h2>Z-Score · RSI (÷100) · Width · IL% (÷100)</h2></div></div>
-      <div class="chart-wrap"><canvas id="signalChart"></canvas></div>
+    <!-- Trade table -->
+    <div class="card">
+      <div class="card-head">
+        <div><p class="eyebrow">Trade History</p><h2>Every swap and recenter</h2></div>
+        <span id="swapCount" class="count-pill hidden"></span>
+      </div>
+      <div id="tableWrap"><div class="empty-state"><p>No trades yet.</p></div></div>
     </div>
 
-    <div class="panel">
-      <div class="panel-header">
-        <div><p class="eyebrow">Trade History</p><h2>Every swap with Z-Score, RSI, OU Half-Life at execution</h2></div>
-        <span id="swapCount" class="pill hidden"></span>
-      </div>
-      <div id="swapTableContainer"><div class="empty-state compact"><h3>No trades yet</h3></div></div>
-    </div>
   </section>
 </main>
 <script type="module" src="/app.js"></script>
