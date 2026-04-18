@@ -9,20 +9,19 @@
 <body>
 <main class="shell">
 
-  <!-- ── SIDEBAR ──────────────────────────────────────────────────────────── -->
   <aside class="sidebar">
 
     <div class="brand">
-      <p class="eyebrow">Static Concentrated Pool · NSE · x·y=k</p>
+      <p class="eyebrow">Static Pool · Virtual Depth · x·y=k · NSE</p>
       <h1>AMM Pool Manager</h1>
       <p class="lede">
-        Upload two stock CSVs. The pool earns the spread every time the
-        price ratio oscillates inside the concentration band. Set your
-        stop-loss and alpha-protection levels to control downside.
+        Set your real capital and a virtual liquidity depth. The pool uses
+        virtual depth to generate swap signals — actual NSE orders are sized
+        by real capital. Stop-loss and alpha-protection guard the downside.
       </p>
     </div>
 
-    <!-- Upload -->
+    <!-- Datasets -->
     <section class="card">
       <h2>Datasets</h2>
       <label class="upload">
@@ -45,30 +44,47 @@
     <!-- Capital -->
     <section class="card">
       <h2>Capital</h2>
-      <label class="field">Total Capital (₹)
+      <label class="field">Real Capital (₹) — your actual portfolio size
         <input id="realCapital" type="number" min="10000" step="100000" value="2000000"/>
+        <span class="sub-hint">Actual NSE orders are sized from this amount</span>
       </label>
-      <p class="hint">Split 50 / 50 between the two assets at open price. Rounded to whole shares.</p>
     </section>
 
-    <!-- Concentration -->
+    <!-- Virtual Liquidity — the key new box -->
     <section class="card card-blue">
-      <h2>🎯 Concentration Band</h2>
-      <label class="field">Half-width ± (%)
-        <input id="concentrationPct" type="number" min="0.1" max="50" step="0.1" value="2.0"/>
+      <h2>🔬 Virtual Liquidity Depth</h2>
+      <label class="field">Virtual Capital (₹) — pool depth multiplier
+        <input id="virtualCapital" type="number" min="100000" step="1000000" value="20000000"/>
+        <span id="virtLabel" class="sub-hint"></span>
       </label>
-      <label class="field" style="margin-top:8px">Recenter cooldown (hours)
-        <input id="recenterCooldownHrs" type="number" min="1" max="168" step="1" value="24"/>
-      </label>
-      <label class="checkbox">
-        <input id="recenterEnabled" type="checkbox" checked/>
-        Enable automatic recentering
-      </label>
-      <div class="info-box">
-        <strong>Tighter band</strong> (0.5–1%) → more swaps, lower IL per trade,
-        more recenters needed. <strong>Wider band</strong> (3–5%) → fewer recenters,
-        larger IL spikes, fewer swaps. Cooldown prevents back-to-back recenters
-        in choppy markets.
+      <div class="virt-explainer">
+        <div class="ve-row">
+          <span class="ve-icon">📐</span>
+          <div>
+            <strong>What it does</strong>
+            <p>Sets the depth of the constant-product pool (k = xVirtual × yVirtual). A deeper pool generates smaller, more frequent swap signals. A shallower pool produces chunkier, less frequent trades.</p>
+          </div>
+        </div>
+        <div class="ve-row">
+          <span class="ve-icon">💡</span>
+          <div>
+            <strong>Example</strong>
+            <p>Real capital ₹20 L, Virtual ₹2 Cr → <strong>10× depth</strong>. The pool behaves as if it holds 10× more shares, giving much tighter concentration and more frequent small swaps — all executed with your real ₹20 L.</p>
+          </div>
+        </div>
+        <div class="ve-row">
+          <span class="ve-icon">⚖️</span>
+          <div>
+            <strong>Trade-off</strong>
+            <p>Higher virtual depth = more swaps = more alpha potential but also higher cumulative brokerage. Lower = fewer trades, less brokerage, less IL.</p>
+          </div>
+        </div>
+      </div>
+      <div class="virt-table">
+        <div class="vt-row head"><span>Real</span><span>Virtual</span><span>Depth</span><span>Character</span></div>
+        <div class="vt-row"><span>₹20 L</span><span>₹20 L</span><span>1×</span><span>Standard pool</span></div>
+        <div class="vt-row"><span>₹20 L</span><span>₹2 Cr</span><span>10×</span><span>Tight concentration</span></div>
+        <div class="vt-row"><span>₹20 L</span><span>₹20 Cr</span><span>100×</span><span>Very tight / micro-swaps</span></div>
       </div>
     </section>
 
@@ -83,20 +99,20 @@
           <input id="sellBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
         </label>
       </div>
-      <p class="hint">Zerodha / NSE standard: 0.15% + 0.15% = 0.30% round-trip. A swap only executes when net profit exceeds zero after brokerage.</p>
+      <p class="hint">Swaps execute only when net profit after both brokerage legs is positive.</p>
     </section>
 
     <!-- IL Stop-Loss -->
     <section class="card card-red">
       <h2>🛑 IL Stop-Loss &amp; Auto-Resume</h2>
       <div class="two-col">
-        <label class="field">Stop at IL (%)
+        <label class="field">Stop when IL exceeds (%)
           <input id="ilStopLossPct" type="number" min="0" max="100" step="0.5" value="3.0"/>
           <span class="sub-hint">0 = disabled</span>
         </label>
-        <label class="field">Resume at IL (%)
+        <label class="field">Resume when IL recovers to (%)
           <input id="ilResumePct" type="number" min="0" max="100" step="0.5" value="1.0"/>
-          <span class="sub-hint">0 = no resume</span>
+          <span class="sub-hint">0 = stay halted</span>
         </label>
       </div>
       <div class="flow-strip">
@@ -110,7 +126,7 @@
         <div class="fs-arr">→</div>
         <div class="fs-box run">Trading</div>
       </div>
-      <p class="hint">Pool halts swaps the moment IL falls below −Stop%. Automatically restarts when IL recovers above −Resume%. Set both 0 to run without protection.</p>
+      <p class="hint">Pool halts the moment IL falls below −Stop%. Automatically restarts when IL recovers above −Resume%. Set both to 0 to run without protection.</p>
     </section>
 
     <!-- Alpha Protection -->
@@ -122,25 +138,13 @@
       </label>
       <label class="field" style="margin-top:8px">Activate after cash ROI reaches (%)
         <input id="alphaProtectThresholdPct" type="number" min="0" max="50" step="0.1" value="0.3"/>
-        <span class="sub-hint">0 = protect from very first hour</span>
+        <span class="sub-hint">0 = protect from the very first hour</span>
       </label>
       <div class="protect-flow">
-        <div class="pf-row">
-          <span class="pf-num">①</span>
-          <span>Cash profit grows until it crosses the Activate threshold</span>
-        </div>
-        <div class="pf-row">
-          <span class="pf-num">②</span>
-          <span>Protection active — monitor whether <em>|IL%| ≥ Cash ROI%</em></span>
-        </div>
-        <div class="pf-row">
-          <span class="pf-num">③</span>
-          <span>If IL threatens to erase alpha → halt. Total value ≈ hold (net zero)</span>
-        </div>
-        <div class="pf-row">
-          <span class="pf-num">④</span>
-          <span>When IL retreats below Cash ROI → resume harvesting</span>
-        </div>
+        <div class="pf-row"><span class="pf-num">①</span><span>Cash profit grows until it crosses the Activate threshold</span></div>
+        <div class="pf-row"><span class="pf-num">②</span><span>Protection active — monitor whether <em>|IL%| ≥ Cash ROI%</em></span></div>
+        <div class="pf-row"><span class="pf-num">③</span><span>If IL threatens to erase alpha → halt. Total value ≈ hold value (net zero)</span></div>
+        <div class="pf-row"><span class="pf-num">④</span><span>When IL retreats below cash ROI → resume harvesting</span></div>
       </div>
     </section>
 
@@ -149,15 +153,14 @@
       <h2>CSV Format</h2>
       <ul>
         <li><code>date</code> — <code>2025-01-01 09:15:00+05:30</code></li>
-        <li><code>close</code> — price in ₹</li>
+        <li><code>close</code> — closing price in ₹</li>
         <li><code>volume</code> — trade volume</li>
-        <li>1-minute bars are merged to hourly last-close automatically</li>
+        <li>1-minute bars are merged to hourly automatically</li>
       </ul>
     </section>
 
   </aside>
 
-  <!-- ── CONTENT ───────────────────────────────────────────────────────────── -->
   <section class="content">
 
     <div id="statusBanner" class="status-banner status-info">
@@ -169,10 +172,7 @@
     <!-- Results -->
     <div class="card">
       <div class="card-head">
-        <div>
-          <p class="eyebrow">Results</p>
-          <h2 id="pairHeading">Reliance  ↔  Kotak Bank</h2>
-        </div>
+        <div><p class="eyebrow">Results</p><h2 id="pairHeading">Reliance  ↔  Kotak Bank</h2></div>
         <button id="downloadCsv" class="btn-secondary hidden">⬇ Download CSV</button>
       </div>
       <div id="metricsGrid" class="metric-grid">
@@ -184,7 +184,7 @@
     <div class="card">
       <div class="card-head"><div>
         <p class="eyebrow">Performance Summary</p>
-        <h2>Harvest · Risk · Quality · IL</h2>
+        <h2>Harvest · Risk · Quality · Virtual Depth</h2>
       </div></div>
       <div id="perfPanel"><div class="empty-state"><p>Run simulation first.</p></div></div>
     </div>
@@ -193,15 +193,15 @@
     <div class="card">
       <div class="card-head"><div>
         <p class="eyebrow">Portfolio Value</p>
-        <h2>AMM Total Value · Hold · Cash Profit — red shading = halted</h2>
+        <h2>AMM Total · Hold · Cash — yellow lines = trades, red shading = halted</h2>
       </div></div>
       <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
     </div>
 
     <div class="card">
       <div class="card-head"><div>
-        <p class="eyebrow">Alpha &amp; IL</p>
-        <h2>Net Alpha ₹ vs Hold · IL% (scaled ÷10) — red shading = halted</h2>
+        <p class="eyebrow">Net Alpha &amp; IL</p>
+        <h2>Alpha ₹ · IL% (scaled) — red shading = halted</h2>
       </div></div>
       <div class="chart-wrap"><canvas id="alphaChart"></canvas></div>
     </div>
@@ -209,7 +209,7 @@
     <!-- Trade table -->
     <div class="card">
       <div class="card-head">
-        <div><p class="eyebrow">Trade History</p><h2>Every swap and recenter</h2></div>
+        <div><p class="eyebrow">Trade History</p><h2>Every swap with full P&amp;L</h2></div>
         <span id="swapCount" class="count-pill hidden"></span>
       </div>
       <div id="tableWrap"><div class="empty-state"><p>No trades yet.</p></div></div>
