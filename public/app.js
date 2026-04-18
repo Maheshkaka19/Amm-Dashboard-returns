@@ -147,7 +147,7 @@ function renderMetrics(){
     {label:'Pool Asset Value',         value:inr(r.poolAssets),         delta:null},
     {label:'Unrealized IL',            value:inr(r.ilINR),              delta:pct(r.ilPct,3),       pos:r.ilPct>=0},
     {label:'Total Brokerage Paid',     value:inr(r.totalBrokerage),     delta:pct(-r.brokRoi,3),    pos:false},
-    {label:'Real Capital Deployed',    value:inr(r.realInitCapital),    delta:null},
+    {label:'Real Capital Deployed',    value:inr(r.realInitCap),    delta:null},
     {label:'Virtual Capital (Depth)',  value:inr(r.virtualCapital),     delta:`${r.virtMultiple.toFixed(1)}×`},
     {label:'Profitable Swaps',         value:`${r.successfulSwaps} / ${r.totalSwaps}`, delta:null},
     {label:'Swap Success Rate',        value:`${dec(r.successRate*100,1)}%`, delta:null},
@@ -288,9 +288,9 @@ function renderTable(){
           <td>${s.action}</td>
           <td>${s.buyAsset}</td><td class="r">${qty(s.buyQty)}</td><td class="r neg">${inr2(s.cost)}</td>
           <td>${s.sellAsset}</td><td class="r">${qty(s.sellQty)}</td><td class="r pos">${inr2(s.revenue)}</td>
-          <td class="r ${s.gross>=0?'pos':'neg'}">${inr2(s.gross)}</td>
-          <td class="r neg">${inr2(s.brok)}</td>
-          <td class="r ${s.net>=0?'pos':'neg'}">${inr2(s.net)}</td>
+          <td class="r ${s.ampGross>=0?'pos':'neg'}">${inr2(s.ampGross)}</td>
+          <td class="r neg">${inr2(s.ampBrok)}</td>
+          <td class="r ${s.ampNet>=0?'pos':'neg'}">${inr2(s.ampNet)}</td>
           <td class="r">${inr(s.cashProfit)}</td>
           <td class="r">${qty(s.poolX)}</td><td class="r">${qty(s.poolY)}</td>
           <td class="r ${s.ilPct>=0?'pos':'neg'}">${dec(s.ilPct,3)}%</td>
@@ -305,7 +305,7 @@ function downloadCsv(rows){
   const lines=[h.join(',')].concat(rows.map(r=>[
     r.date,`"${r.action}"`,r.buyAsset,Math.round(r.buyQty),dec(r.cost,2),
     r.sellAsset,Math.round(r.sellQty),dec(r.revenue,2),
-    dec(r.gross,2),dec(r.brok,2),dec(r.net,2),dec(r.cashProfit,2),
+    dec(r.ampGross,2),dec(r.ampBrok,2),dec(r.ampNet,2),dec(r.cashProfit,2),
     r.asset1Price,r.asset2Price,Math.round(r.poolX),Math.round(r.poolY),
     dec(r.poolValue,2),dec(r.ilPct,4),dec(r.totalValue,2),r.haltReason||'',
   ].join(',')));

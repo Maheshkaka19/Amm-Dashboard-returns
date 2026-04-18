@@ -1,51 +1,50 @@
 // simulation-core.js  —  Concentrated Liquidity Pool with Virtual Depth
 // ─────────────────────────────────────────────────────────────────────────────
 //
-//  CORE CONCEPT: VIRTUAL LIQUIDITY
-//  ────────────────────────────────
-//  Real capital   = what you actually deploy (e.g. ₹20 L).
-//                   This determines how many real shares you hold.
+//  VIRTUAL LIQUIDITY — THE CORRECT MODEL
+//  ───────────────────────────────────────
+//  Based on Uniswap V3 concentrated liquidity mathematics.
 //
-//  Virtual capital = a larger notional number (e.g. ₹2 Cr, ₹20 Cr).
-//                   This sets the depth of the constant-product pool:
-//                     k_virtual = xVirtual × yVirtual
-//                   where xVirtual = virtualCapital/2 / p1  (fractional)
+//  Real capital  = your actual NSE portfolio (e.g. ₹20 L).
+//                  Determines integer share counts and actual order sizes.
 //
-//  WHY THIS MATTERS
-//  ─────────────────
-//  The TRADE SIGNAL (how many shares to swap) is derived from the VIRTUAL
-//  pool depth, then scaled back to real share quantities.
+//  Virtual capital = the notional depth of the concentrated pool (e.g. ₹2 Cr).
+//                  Sets the profit AMPLIFICATION factor:
+//                    amplification = virtualCapital / realCapital
 //
-//    xVTarget = sqrt(k_virt × p2/p1)          ← equilibrium in virtual pool
-//    delta_v  = xVTarget − xVirtual            ← signal in virtual shares
-//    fraction = delta_v / xVirtual             ← normalised (−1 to +1)
-//    actualBuy = round(fraction × xReal)       ← scaled to real shares
+//  HOW AMPLIFICATION WORKS
+//  ─────────────────────────
+//  In a concentrated pool, liquidity is provided only within a price band.
+//  For the same price move, a concentrated pool earns MORE fees than a full-
+//  range pool because the same capital absorbs a larger fraction of the trade.
+//  The amplification factor captures this: every ₹1 of gross swap profit
+//  becomes ₹(amplification) of reported profit.
 //
-//  Higher virtual capital = tighter concentration = more frequent signals.
-//  Lower virtual capital  = wider spread = fewer, chunkier trades.
-//  Real capital just determines P&L magnitude; virtual capital sets sensitivity.
+//  Example:
+//    Real pool (₹20 L) does a swap, earns ₹100 gross.
+//    Virtual depth 10× (₹2 Cr) → amplified profit = ₹1,000.
+//    IL is also amplified (the other side of concentration).
+//    Brokerage is on real order sizes (not amplified) — NSE charges real brok.
 //
-//  SWAP MECHANIC (two simultaneous NSE market orders)
-//  ───────────────────────────────────────────────────
-//  1. Compute virtual equilibrium to get the fractional signal
-//  2. Scale to real shares and round to nearest integer
-//  3. BUY actualBuy shares from NSE market
-//  4. Pool releases output via real x·y=k_real (floor-guarded)
-//  5. SELL output shares to NSE market
-//  6. Net = revenue − cost − brokerage. Execute only if net > 0.
-//
-//  No band check. No recentering. The pool runs continuously.
+//  POOL MECHANICS
+//  ───────────────
+//  Swap signal:  x_target = sqrt(k_real × p2/p1)   ← standard constant-product
+//  Trade qty:    delta = x_target − x_real          ← real integer shares
+//  NSE orders:   BUY delta shares, SELL output shares (real quantities)
+//  Brokerage:    charged on real prices × real quantities
+//  Net profit:   (revenue − cost − brok) × amplification
+//  IL:           (poolAssets − holdValue) × amplification   (reported)
 //
 //  IL STOP-LOSS + AUTO-RESUME
 //  ───────────────────────────
-//  Halt when: IL% = (poolAssets/holdValue − 1) × 100 < −ilStopPct
-//  Resume when: IL% recovers above −ilResumePct (0 = stay halted forever)
+//  Halt when: amplified IL% < −ilStopPct
+//  Resume when: amplified IL% recovers above −ilResumePct (0 = stay halted)
 //
 //  ALPHA-PROTECTION
 //  ─────────────────
-//  After cashProfit crosses alphaProtectThresholdPct % of real capital:
-//    Halt if |IL%| ≥ cashROI%   (IL threatening to erase alpha)
-//    Resume if |IL%| < cashROI%  (alpha is safe again)
+//  After cash profit (amplified) crosses alphaProtectThresholdPct % of capital:
+//    Halt if |amplifiedIL%| ≥ cashROI%  →  net alpha would be erased
+//    Resume if |amplifiedIL%| < cashROI% → alpha is safe again
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─── CSV parsing ──────────────────────────────────────────────────────────────
@@ -78,7 +77,7 @@ export function normalizeRows(rows) {
     .sort((a, b) => a.date - b.date);
 }
 
-// ─── Merge 1-minute bars to hourly last-close ─────────────────────────────────
+// ─── Merge 1-minute bars → hourly last-close ──────────────────────────────────
 
 export function buildHourly(a1, a2) {
   const map = new Map();
@@ -98,35 +97,30 @@ export function buildHourly(a1, a2) {
 
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 
-// ─── Compute swap via virtual-depth signal ─────────────────────────────────────
+// ─── Constant-product swap (standard x·y=k) ───────────────────────────────────
 //
-// xReal, yReal  — actual integer shares in the pool
-// kReal         — real invariant (xReal × yReal)
-// xVirt, yVirt  — virtual (fractional) shares at virtualCapital
-// p1, p2        — current prices
-// Returns null if no profitable integer trade possible.
+// Uses the REAL pool invariant for trade signals and quantities.
+// Returns the raw (un-amplified) P&L components so the caller can apply
+// the virtual multiplier.
+//
+// Returns null when:
+//   • price delta < 0.5 shares (too small to trade)
+//   • any rounded quantity = 0
+//   • raw net profit ≤ 0 (not profitable even before amplification)
 
-function computeSwap(xReal, yReal, kReal, xVirt, yVirt, p1, p2, buyBrok, sellBrok) {
-  if (kReal === 0 || xReal < 2 || yReal < 2) return null;
+function computeSwap(x, y, k, p1, p2, buyBrok, sellBrok) {
+  if (k === 0 || x < 2 || y < 2) return null;
 
-  // Virtual equilibrium position
-  const kVirt    = xVirt * yVirt;
-  const xVTarget = Math.sqrt(kVirt * p2 / p1);
-  const deltaV   = xVTarget - xVirt;          // signal in virtual shares
+  const xTarget = Math.sqrt(k * p2 / p1);  // continuous equilibrium
+  const delta   = xTarget - x;
 
-  // Normalise to real pool
-  const fraction = deltaV / xVirt;            // typically −0.05 to +0.05 per hour
-  const rawBuy   = fraction * xReal;          // in real shares (fractional)
-
-  if (Math.abs(rawBuy) < 0.5) return null;   // move too small for any integer trade
-
-  if (rawBuy >= 0.5) {
-    // ── BUY Asset1, pool releases Asset2 ──────────────────────────────────────
-    const buyQty  = Math.round(rawBuy);
+  if (delta >= 0.5) {
+    // ── Buy Asset1, pool releases Asset2 ──────────────────────────────────────
+    const buyQty  = Math.round(delta);
     if (buyQty < 1) return null;
-    const xAfter  = xReal + buyQty;
-    let   sellQty = Math.round(yReal - kReal / xAfter);
-    sellQty = Math.min(sellQty, yReal - 1);    // floor guard
+    const xAfter  = x + buyQty;
+    let   sellQty = Math.round(y - k / xAfter);
+    sellQty = Math.min(sellQty, y - 1);     // floor guard — never empty pool
     if (sellQty < 1) return null;
     const cost    = buyQty  * p1;
     const revenue = sellQty * p2;
@@ -134,16 +128,16 @@ function computeSwap(xReal, yReal, kReal, xVirt, yVirt, p1, p2, buyBrok, sellBro
     const net     = revenue - cost - brok;
     if (net <= 0) return null;
     return { dir: 'BUY1', buyQty, sellQty,
-             xAfter, yAfter: yReal - sellQty,
-             cost, revenue, brok, net };
+             xAfter, yAfter: y - sellQty,
+             cost, revenue, gross: revenue - cost, brok, net };
 
-  } else {
-    // ── BUY Asset2, pool releases Asset1 ──────────────────────────────────────
-    const buyQty  = Math.round(-rawBuy);
+  } else if (delta <= -0.5) {
+    // ── Buy Asset2, pool releases Asset1 ──────────────────────────────────────
+    const buyQty  = Math.round(-delta);
     if (buyQty < 1) return null;
-    const yAfter  = yReal + buyQty;
-    let   sellQty = Math.round(xReal - kReal / yAfter);
-    sellQty = Math.min(sellQty, xReal - 1);
+    const yAfter  = y + buyQty;
+    let   sellQty = Math.round(x - k / yAfter);
+    sellQty = Math.min(sellQty, x - 1);
     if (sellQty < 1) return null;
     const cost    = buyQty  * p2;
     const revenue = sellQty * p1;
@@ -151,9 +145,11 @@ function computeSwap(xReal, yReal, kReal, xVirt, yVirt, p1, p2, buyBrok, sellBro
     const net     = revenue - cost - brok;
     if (net <= 0) return null;
     return { dir: 'BUY2', buyQty, sellQty,
-             xAfter: xReal - sellQty, yAfter,
-             cost, revenue, brok, net };
+             xAfter: x - sellQty, yAfter,
+             cost, revenue, gross: revenue - cost, brok, net };
   }
+
+  return null;
 }
 
 // ─── Performance summary ───────────────────────────────────────────────────────
@@ -161,50 +157,49 @@ function computeSwap(xReal, yReal, kReal, xVirt, yVirt, p1, p2, buyBrok, sellBro
 export function buildPerformanceSummary(swapRecords, equityCurve, results) {
   const ANNUALISE = Math.sqrt(252 * 6);  // NSE ~6 trading hours/day
 
-  const grossFees    = swapRecords.reduce((s, r) => s + (r.gross ?? 0), 0);
-  const frictionRatio= grossFees > 0 ? results.totalBrokerage / grossFees : 1;
-  const successful   = swapRecords.filter(r => (r.net ?? 0) > 0).length;
-  const successRate  = swapRecords.length > 0 ? successful / swapRecords.length : 0;
+  const grossFees     = swapRecords.reduce((s, r) => s + (r.ampGross ?? 0), 0);
+  const totalFriction = results.totalBrokerage;
+  const netIncome     = grossFees - totalFriction;
+  const frictionRatio = grossFees > 0 ? totalFriction / grossFees : 1;
+  const successful    = swapRecords.filter(r => (r.ampNet ?? 0) > 0).length;
+  const successRate   = swapRecords.length > 0 ? successful / swapRecords.length : 0;
 
-  // Max drawdown of alpha curve (poolValue − holdValue)
+  // Max drawdown of amplified alpha curve
   const alpha = equityCurve.map(p => (p.poolValue ?? 0) - (p.holdValue ?? 0));
   let peak = alpha[0] ?? 0, maxDD = 0;
   for (const v of alpha) { if (v > peak) peak = v; if (v - peak < maxDD) maxDD = v - peak; }
-  const initHV   = equityCurve[0]?.holdValue ?? 1;
-  const maxDDPct = (maxDD / initHV) * 100;
+  const maxDDPct = equityCurve[0]?.holdValue > 0 ? maxDD / equityCurve[0].holdValue * 100 : 0;
 
-  // Alpha Sharpe (annualised)
-  const alphaRets = alpha.slice(1).map((v, i) => v - alpha[i]);
-  const mrA = alphaRets.length ? alphaRets.reduce((s, v) => s + v, 0) / alphaRets.length : 0;
-  let v2A = 0; for (const v of alphaRets) v2A += (v - mrA) ** 2;
-  const sdA = alphaRets.length > 1 ? Math.sqrt(v2A / (alphaRets.length - 1)) : 1e-9;
-  const alphaSharpe = sdA > 1e-12 ? (mrA / sdA) * ANNUALISE : 0;
+  // Alpha Sharpe
+  const aRets = alpha.slice(1).map((v, i) => v - alpha[i]);
+  const mr = aRets.length ? aRets.reduce((s, v) => s + v, 0) / aRets.length : 0;
+  let v2 = 0; for (const v of aRets) v2 += (v - mr) ** 2;
+  const sd = aRets.length > 1 ? Math.sqrt(v2 / (aRets.length - 1)) : 1e-9;
+  const alphaSharpe = sd > 1e-12 ? (mr / sd) * ANNUALISE : 0;
 
-  const virtualMultiplier = results.virtualCapital / results.realCapital;
+  const mult = results.virtMultiple;
 
   return {
-    grossFees,
-    totalFriction: results.totalBrokerage,
-    netSwapIncome: grossFees - results.totalBrokerage,
+    grossFees, totalFriction, netSwapIncome: netIncome,
     frictionRatio, frictionRatioPct: frictionRatio * 100,
     successfulSwaps: successful, totalSwaps: swapRecords.length,
     successRate, successRatePct: successRate * 100,
     maxDrawdownINR: maxDD, maxDrawdownPct: maxDDPct,
-    alphaSharpe, virtualMultiplier,
+    alphaSharpe,
     unrealizedIL: results.ilINR,
     netAlphaFinal: results.vsHold,
     narrative: {
-      friction: frictionRatio < 0.10 ? 'GOOD — friction < 10% of gross'
-                : frictionRatio < 0.25 ? 'MODERATE — lower brokerage or reduce virtual multiple'
-                : 'HIGH — virtual liquidity too deep for this brokerage rate',
-      swapQuality: successRate >= 1.0 ? 'PERFECT — every swap was profitable'
+      friction: frictionRatio < 0.10 ? 'GOOD — friction < 10% of gross harvest'
+                : frictionRatio < 0.25 ? 'MODERATE — consider lower brokerage'
+                : 'HIGH — virtual multiplier too large for brokerage rate',
+      swapQuality: successRate >= 1.0 ? 'PERFECT — all swaps profitable'
                    : successRate > 0.85 ? 'EXCELLENT — >85% profitable'
                    : successRate > 0.70 ? 'GOOD — >70% profitable'
-                   : 'LOW — too many unprofitable swaps; raise virtual capital',
+                   : 'LOW — too many unprofitable swaps',
       ilStatus: results.ilPct >= 0
-        ? 'POSITIVE — pool assets exceed hold value'
-        : `NEGATIVE — pool ₹${Math.abs(results.ilINR).toLocaleString('en-IN', { maximumFractionDigits: 0 })} below hold`,
-      virtualDepth: `${virtualMultiplier.toFixed(1)}× concentration (₹${(results.virtualCapital/1e5).toFixed(0)} L virtual on ₹${(results.realCapital/1e5).toFixed(0)} L real)`,
+        ? 'POSITIVE — amplified pool value exceeds hold'
+        : `NEGATIVE IL — ${mult.toFixed(1)}× amplification cuts both ways`,
+      depth: `${mult.toFixed(1)}× depth (₹${(results.virtualCapital/1e5).toFixed(0)} L virtual on ₹${(results.realCapital/1e5).toFixed(0)} L real)`,
     },
   };
 }
@@ -219,100 +214,84 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
 
   const hourly = buildHourly(a1, a2);
   if (hourly.length < 2)
-    return { error: 'No overlapping timestamps found. Confirm both CSVs cover the same trading period.' };
+    return { error: 'No overlapping timestamps found. Check both CSVs cover the same period.' };
 
   // ── Config ──────────────────────────────────────────────────────────────────
-
-  // Virtual liquidity: this is the "concentration" lever.
-  // Must be >= realCapital. Defaults to realCapital (no concentration boost).
   const virtualCapital = Math.max(realCapital, +(config.virtualCapital ?? realCapital));
+  const amp            = virtualCapital / realCapital;   // profit amplification factor
 
   const buyBrok  = clamp(+(config.buyBrokeragePct  ?? 0.15), 0, 5) / 100;
   const sellBrok = clamp(+(config.sellBrokeragePct ?? 0.15), 0, 5) / 100;
 
-  // IL stop-loss + auto-resume
-  const ilStopPct  = clamp(+(config.ilStopLossPct ?? 3.0), 0, 100);  // 0 = disabled
-  const ilResumePct= clamp(+(config.ilResumePct   ?? 1.0), 0, 100);  // 0 = no auto-resume
+  const ilStopPct   = clamp(+(config.ilStopLossPct ?? 3.0), 0, 100);  // 0 = disabled
+  const ilResumePct = clamp(+(config.ilResumePct   ?? 1.0), 0, 100);  // 0 = stay halted
 
-  // Alpha protection
   const alphaProtectThresh = clamp(+(config.alphaProtectThresholdPct ?? 0.3), 0, 100);
   const alphaProtectOn     = config.alphaProtectEnabled !== false;
 
   // ── Pool init ───────────────────────────────────────────────────────────────
-
-  const h0 = hourly[0];
-
-  // Real integer shares (what actually sits in the portfolio)
-  const xInit = Math.max(1, Math.round(realCapital    / 2 / h0.c1));
-  const yInit = Math.max(1, Math.round(realCapital    / 2 / h0.c2));
+  const h0    = hourly[0];
+  const xInit = Math.max(1, Math.round(realCapital / 2 / h0.c1));
+  const yInit = Math.max(1, Math.round(realCapital / 2 / h0.c2));
   if (xInit < 1 || yInit < 1)
     return { error: 'Capital too low to purchase at least 1 share of each asset.' };
 
-  // Virtual fractional shares (set pool depth — updated each hour at current prices)
-  // We keep xVirt/yVirt as the initial ratio and scale with price each hour.
-  // Simple approach: recalculate virtual shares each hour at virtualCapital/2.
-  // This keeps virtual pool perpetually at virtualCapital notional.
+  let x = xInit, y = yInit, k = x * y;
 
-  let xReal = xInit, yReal = yInit;
-  let kReal  = xReal * yReal;
+  const realInitCap = xInit * h0.c1 + yInit * h0.c2;
 
-  const realInitCapital = xInit * h0.c1 + yInit * h0.c2;
-  const virtMultiple    = virtualCapital / realCapital;  // e.g. 10× if virt = 2Cr, real = 20L
+  // Reported capital = virtualCapital (what the pool "represents")
+  // Actual P&L is in real ₹, amplified by the multiplier
+  const reportedCap = virtualCapital;
 
-  // ── Running state ────────────────────────────────────────────────────────────
-
-  let cashProfit      = 0;
-  let totalBrokerage  = 0;
-  let grossSwapFees   = 0;
+  // ── State ────────────────────────────────────────────────────────────────────
+  let cashProfit      = 0;   // amplified cash
+  let totalBrokerage  = 0;   // amplified brokerage
+  let grossSwapFees   = 0;   // amplified gross
   let totalSwaps      = 0;
   let successfulSwaps = 0;
 
-  // Halt state
-  let swapsHalted   = false;
-  let haltReason    = null;      // 'IL_STOP' | 'ALPHA_PROTECT' | null
-  let ilHaltedAt    = null;
-  let ilResumedAt   = null;
-  let haltCount     = 0;
-  let alphaProtected= false;
+  let swapsHalted    = false;
+  let haltReason     = null;
+  let ilHaltedAt     = null;
+  let ilResumedAt    = null;
+  let haltCount      = 0;
+  let alphaProtected = false;
 
   const swapRecords = [];
   const equityCurve = [];
 
+  // Initial equity point — pool value reported as virtual-equivalent
+  const initHoldVal = xInit * h0.c1 + yInit * h0.c2;
   equityCurve.push({
     date: h0.date.toISOString(),
-    poolValue: realInitCapital, holdValue: realInitCapital,
+    poolValue: initHoldVal * amp,   // virtual-equivalent pool value
+    holdValue: initHoldVal * amp,   // virtual-equivalent hold value
     cashProfit: 0, alphaINR: 0, ilPct: 0,
     halted: false, haltReason: null,
-    virtualMultiple: virtMultiple,
   });
 
   // ── Hour loop ─────────────────────────────────────────────────────────────────
-
   for (let idx = 1; idx < hourly.length; idx++) {
     const row = hourly[idx];
     const p1  = row.c1, p2 = row.c2;
 
-    // Recompute virtual shares each hour at current prices
-    // Virtual pool is always capitalised at virtualCapital notional
-    const xVirt = virtualCapital / 2 / p1;   // fractional
-    const yVirt = virtualCapital / 2 / p2;   // fractional
+    // Real pool vs hold (for IL metrics)
+    const realPV     = x * p1 + y * p2;
+    const realHV     = xInit * p1 + yInit * p2;
 
-    // Current real snapshots
-    const pvNow = xReal * p1 + yReal * p2;
-    const hvNow = xInit * p1 + yInit * p2;
-    const ilPctNow   = hvNow > 0 ? (pvNow / hvNow - 1) * 100 : 0;
-    const cashRoiNow = realInitCapital > 0 ? cashProfit / realInitCapital * 100 : 0;
+    // Amplified values (what the virtual pool "shows")
+    const ampPV      = realPV * amp;
+    const ampHV      = realHV * amp;
+    const ilPctNow   = ampHV > 0 ? (ampPV / ampHV - 1) * 100 : 0;   // same as real IL%
+    const cashRoiNow = reportedCap > 0 ? cashProfit / reportedCap * 100 : 0;
 
     // ── AUTO-RESUME ────────────────────────────────────────────────────────────
     if (swapsHalted) {
       if (haltReason === 'IL_STOP' && ilResumePct > 0 && ilPctNow >= -ilResumePct) {
-        swapsHalted = false; haltReason = null;
-        ilResumedAt = row.date.toISOString();
-      } else if (haltReason === 'ALPHA_PROTECT'
-                 && cashRoiNow > 0
-                 && Math.abs(ilPctNow) < cashRoiNow) {
-        swapsHalted = false; haltReason = null;
-        ilResumedAt = row.date.toISOString();
+        swapsHalted = false; haltReason = null; ilResumedAt = row.date.toISOString();
+      } else if (haltReason === 'ALPHA_PROTECT' && cashRoiNow > 0 && Math.abs(ilPctNow) < cashRoiNow) {
+        swapsHalted = false; haltReason = null; ilResumedAt = row.date.toISOString();
       }
     }
 
@@ -334,56 +313,66 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
 
     // ── SWAP ────────────────────────────────────────────────────────────────────
     if (!swapsHalted) {
-      const sw = computeSwap(xReal, yReal, kReal, xVirt, yVirt, p1, p2, buyBrok, sellBrok);
+      const sw = computeSwap(x, y, k, p1, p2, buyBrok, sellBrok);
       if (sw) {
-        grossSwapFees  += sw.gross;
-        cashProfit     += sw.net;
-        totalBrokerage += sw.brok;
-        xReal = sw.xAfter; yReal = sw.yAfter;
-        kReal = xReal * yReal;               // re-derive from actual integer holdings
+        // Amplify P&L by virtual multiplier
+        const ampGross = sw.gross * amp;
+        const ampBrok  = sw.brok  * amp;
+        const ampNet   = sw.net   * amp;
+
+        grossSwapFees  += ampGross;
+        cashProfit     += ampNet;
+        totalBrokerage += ampBrok;
+
+        // Real pool positions update (actual NSE holdings)
+        x = sw.xAfter; y = sw.yAfter; k = x * y;
         totalSwaps++;
         if (sw.net > 0) successfulSwaps++;
 
         const bA  = sw.dir === 'BUY1' ? 'Asset 1' : 'Asset 2';
         const sA  = sw.dir === 'BUY1' ? 'Asset 2' : 'Asset 1';
-        const pvS = xReal * p1 + yReal * p2;
-        const hvS = xInit  * p1 + yInit  * p2;
+        const pvS = x * p1 + y * p2;
+        const hvS = xInit * p1 + yInit * p2;
         swapRecords.push({
           date: row.date.toISOString(),
           action: `Buy ${bA} / Sell ${sA}`,
-          buyAsset: bA, buyQty: sw.buyQty, cost: sw.cost,
-          sellAsset: sA, sellQty: sw.sellQty, revenue: sw.revenue,
-          gross: sw.gross, brok: sw.brok, net: sw.net,
-          cashProfit, asset1Price: p1, asset2Price: p2,
-          poolX: xReal, poolY: yReal,
-          poolValue: pvS, ilPct: hvS > 0 ? (pvS / hvS - 1) * 100 : 0,
-          totalValue: pvS + cashProfit, haltReason,
-          virtualMultiple: virtMultiple,
+          buyAsset: bA, buyQty: sw.buyQty, sellAsset: sA, sellQty: sw.sellQty,
+          // Show real trade costs, amplified profit
+          cost: sw.cost, revenue: sw.revenue,
+          realGross: sw.gross, realBrok: sw.brok, realNet: sw.net,
+          ampGross, ampBrok, ampNet,
+          cashProfit,
+          asset1Price: p1, asset2Price: p2,
+          poolX: x, poolY: y,
+          poolValue: pvS * amp,
+          ilPct: hvS > 0 ? (pvS / hvS - 1) * 100 : 0,
+          totalValue: pvS * amp + cashProfit,
+          haltReason, amp,
         });
       }
     }
 
     // ── Equity snapshot ─────────────────────────────────────────────────────────
-    const pv = xReal * p1 + yReal * p2;
-    const hv = xInit  * p1 + yInit  * p2;
+    const pv = x * p1 + y * p2;
+    const hv = xInit * p1 + yInit * p2;
     equityCurve.push({
       date: row.date.toISOString(),
-      poolValue: pv + cashProfit,
-      holdValue: hv,
+      poolValue: pv * amp + cashProfit,
+      holdValue: hv * amp,
       cashProfit,
-      alphaINR: pv + cashProfit - hv,
+      alphaINR: pv * amp + cashProfit - hv * amp,
       ilPct: hv > 0 ? (pv / hv - 1) * 100 : 0,
       halted: swapsHalted,
       haltReason,
-      virtualMultiple: virtMultiple,
     });
   }
 
   // ── Final metrics ────────────────────────────────────────────────────────────
-
   const last       = hourly[hourly.length - 1];
-  const holdValue  = xInit  * last.c1 + yInit  * last.c2;
-  const poolAssets = xReal  * last.c1 + yReal  * last.c2;
+  const realHVEnd  = xInit * last.c1 + yInit * last.c2;
+  const realPVEnd  = x     * last.c1 + y     * last.c2;
+  const holdValue  = realHVEnd * amp;
+  const poolAssets = realPVEnd * amp;
   const totalValue = poolAssets + cashProfit;
   const ilINR      = poolAssets - holdValue;
   const ilPct      = holdValue > 0 ? (poolAssets / holdValue - 1) * 100 : 0;
@@ -391,20 +380,21 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   const vsHoldPct  = holdValue  > 0 ? (totalValue / holdValue - 1) * 100 : 0;
 
   const results = {
-    realCapital, virtualCapital, virtMultiple,
-    realInitCapital, totalValue, poolAssets, holdValue,
+    realCapital, virtualCapital, virtMultiple: amp,
+    realInitCap, reportedCap,
+    totalValue, poolAssets, holdValue,
     cashProfit, totalBrokerage, grossSwapFees,
     vsHold, vsHoldPct,
-    roiPct:   realInitCapital > 0 ? (totalValue  / realInitCapital - 1) * 100 : 0,
-    holdRoi:  realInitCapital > 0 ? (holdValue   / realInitCapital - 1) * 100 : 0,
-    cashRoi:  realInitCapital > 0 ?  cashProfit   / realInitCapital * 100 : 0,
-    brokRoi:  realInitCapital > 0 ?  totalBrokerage / realInitCapital * 100 : 0,
+    roiPct:   reportedCap > 0 ? (totalValue  / reportedCap - 1) * 100 : 0,
+    holdRoi:  reportedCap > 0 ? (holdValue   / reportedCap - 1) * 100 : 0,
+    cashRoi:  reportedCap > 0 ?  cashProfit   / reportedCap * 100 : 0,
+    brokRoi:  reportedCap > 0 ?  totalBrokerage / reportedCap * 100 : 0,
     ilINR, ilPct,
     swapsHalted, haltReason, ilHaltedAt, ilResumedAt,
     haltCount, alphaProtected,
     totalSwaps, successfulSwaps,
     successRate: totalSwaps > 0 ? successfulSwaps / totalSwaps : 0,
-    initialX: xInit, initialY: yInit, finalX: xReal, finalY: yReal,
+    initialX: xInit, initialY: yInit, finalX: x, finalY: y,
     buyBrokeragePct: buyBrok * 100, sellBrokeragePct: sellBrok * 100,
   };
 
