@@ -3,218 +3,155 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Concentrated Liquidity Pool — NSE AMM</title>
+  <title>Uniswap V3 Concentrated Liquidity — NSE AMM</title>
   <link rel="stylesheet" href="/styles.css"/>
 </head>
 <body>
 <main class="shell">
-
   <aside class="sidebar">
 
     <div class="brand">
-      <p class="eyebrow">Static Pool · Virtual Depth · x·y=k · NSE</p>
-      <h1>AMM Pool Manager</h1>
+      <p class="eyebrow">Uniswap V3 Mathematics · NSE Stocks · Real IL · Real Swaps</p>
+      <h1>V3 Concentrated Pool</h1>
       <p class="lede">
-        Set your real capital and a virtual liquidity depth. The pool uses
-        virtual depth to generate swap signals — actual NSE orders are sized
-        by real capital. Stop-loss and alpha-protection guard the downside.
+        True Uniswap V3 liquidity math. Swap deltas are computed from
+        <code>Δx = L·(1/√r_new − 1/√r_old)</code> and <code>Δy = L·(√r_new − √r_old)</code>.
+        Executed as two simultaneous NSE market orders. Stop-loss and
+        alpha-protection guard the downside.
       </p>
     </div>
 
-    <!-- Datasets -->
     <section class="card">
       <h2>Datasets</h2>
-      <label class="upload">
-        <span id="asset1FileName">Upload Asset 1 — 1-min CSV</span>
-        <input id="asset1File" type="file" accept=".csv,text/csv"/>
-      </label>
-      <label class="field" style="margin-top:6px">
-        Label <input id="asset1Label" type="text" value="Reliance"/>
-      </label>
-      <label class="upload" style="margin-top:8px">
-        <span id="asset2FileName">Upload Asset 2 — 1-min CSV</span>
-        <input id="asset2File" type="file" accept=".csv,text/csv"/>
-      </label>
-      <label class="field" style="margin-top:6px">
-        Label <input id="asset2Label" type="text" value="Kotak Bank"/>
-      </label>
+      <label class="upload"><span id="asset1FileName">Upload Asset 1 — 1-min CSV</span><input id="asset1File" type="file" accept=".csv,text/csv"/></label>
+      <label class="field" style="margin-top:6px">Label <input id="asset1Label" type="text" value="Reliance"/></label>
+      <label class="upload" style="margin-top:8px"><span id="asset2FileName">Upload Asset 2 — 1-min CSV</span><input id="asset2File" type="file" accept=".csv,text/csv"/></label>
+      <label class="field" style="margin-top:6px">Label <input id="asset2Label" type="text" value="Kotak Bank"/></label>
       <button id="runSimulation" class="btn-primary">▶ Run Simulation</button>
     </section>
 
-    <!-- Capital -->
     <section class="card">
       <h2>Capital</h2>
-      <label class="field">Real Capital (₹) — your actual portfolio size
+      <label class="field">Capital (₹)
         <input id="realCapital" type="number" min="10000" step="100000" value="2000000"/>
-        <span class="sub-hint">Actual NSE orders are sized from this amount</span>
+        <span class="sub-hint">Split 50/50 between assets to initialise L</span>
       </label>
     </section>
 
-    <!-- Virtual Liquidity — the key new box -->
     <section class="card card-blue">
-      <h2>🔬 Virtual Liquidity Depth</h2>
-      <label class="field">Virtual Capital (₹) — pool depth multiplier
-        <input id="virtualCapital" type="number" min="100000" step="1000000" value="20000000"/>
-        <span id="virtLabel" class="sub-hint"></span>
+      <h2>🎯 Concentration Band</h2>
+      <label class="field">Band Half-Width ± (%)
+        <input id="bandPct" type="number" min="1" max="99" step="1" value="20"/>
       </label>
-      <div class="virt-explainer">
-        <div class="ve-row">
-          <span class="ve-icon">📐</span>
-          <div>
-            <strong>What it does</strong>
-            <p>Sets the depth of the constant-product pool (k = xVirtual × yVirtual). A deeper pool generates smaller, more frequent swap signals. A shallower pool produces chunkier, less frequent trades.</p>
-          </div>
-        </div>
-        <div class="ve-row">
-          <span class="ve-icon">💡</span>
-          <div>
-            <strong>Example</strong>
-            <p>Real capital ₹20 L, Virtual ₹2 Cr → <strong>10× depth</strong>. The pool behaves as if it holds 10× more shares, giving much tighter concentration and more frequent small swaps — all executed with your real ₹20 L.</p>
-          </div>
-        </div>
-        <div class="ve-row">
-          <span class="ve-icon">⚖️</span>
-          <div>
-            <strong>Trade-off</strong>
-            <p>Higher virtual depth = more swaps = more alpha potential but also higher cumulative brokerage. Lower = fewer trades, less brokerage, less IL.</p>
-          </div>
-        </div>
+      <div id="bandLabel" class="band-info"></div>
+      <div class="info-box" style="margin-top:8px">
+        <strong>How V3 concentration works:</strong><br/>
+        Narrower band → higher amplification → more fees per ₹ deployed, but larger IL when price exits.<br/>
+        Wider band → lower amplification, less IL risk, fewer recenters.<br/>
+        Formula: concentration = 1 / (1 − √(p_lower/p_upper))
       </div>
-      <div class="virt-table">
-        <div class="vt-row head"><span>Real</span><span>Virtual</span><span>Depth</span><span>Character</span></div>
-        <div class="vt-row"><span>₹20 L</span><span>₹20 L</span><span>1×</span><span>Standard pool</span></div>
-        <div class="vt-row"><span>₹20 L</span><span>₹2 Cr</span><span>10×</span><span>Tight concentration</span></div>
-        <div class="vt-row"><span>₹20 L</span><span>₹20 Cr</span><span>100×</span><span>Very tight / micro-swaps</span></div>
+      <div class="band-table">
+        <div class="bt-row head"><span>Band ±</span><span>Total range</span><span>Amplification</span></div>
+        <div class="bt-row"><span>5%</span><span>10%</span><span>~10.5×</span></div>
+        <div class="bt-row"><span>10%</span><span>20%</span><span>~5.4×</span></div>
+        <div class="bt-row"><span>20%</span><span>40%</span><span>~2.9×</span></div>
+        <div class="bt-row"><span>50%</span><span>100%</span><span>~1.7×</span></div>
       </div>
     </section>
 
-    <!-- Brokerage -->
     <section class="card">
       <h2>Brokerage</h2>
       <div class="two-col">
-        <label class="field">Buy (%)
-          <input id="buyBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
-        </label>
-        <label class="field">Sell (%)
-          <input id="sellBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
-        </label>
+        <label class="field">Buy (%) <input id="buyBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/></label>
+        <label class="field">Sell (%) <input id="sellBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/></label>
       </div>
-      <p class="hint">Swaps execute only when net profit after both brokerage legs is positive.</p>
+      <p class="hint">Each swap executes only when revenue − cost − brokerage &gt; 0.</p>
     </section>
 
-    <!-- IL Stop-Loss -->
     <section class="card card-red">
       <h2>🛑 IL Stop-Loss &amp; Auto-Resume</h2>
       <div class="two-col">
-        <label class="field">Stop when IL exceeds (%)
-          <input id="ilStopLossPct" type="number" min="0" max="100" step="0.5" value="3.0"/>
+        <label class="field">Stop at IL (%)
+          <input id="ilStopLossPct" type="number" min="0" max="100" step="0.5" value="0"/>
           <span class="sub-hint">0 = disabled</span>
         </label>
-        <label class="field">Resume when IL recovers to (%)
-          <input id="ilResumePct" type="number" min="0" max="100" step="0.5" value="1.0"/>
+        <label class="field">Resume at IL (%)
+          <input id="ilResumePct" type="number" min="0" max="100" step="0.5" value="0"/>
           <span class="sub-hint">0 = stay halted</span>
         </label>
       </div>
       <div class="flow-strip">
-        <div class="fs-box run">Trading</div>
-        <div class="fs-arr">→</div>
-        <div class="fs-box stop">IL &lt; −Stop%</div>
-        <div class="fs-arr">→</div>
-        <div class="fs-box wait">Paused</div>
-        <div class="fs-arr">→</div>
-        <div class="fs-box go">IL &gt; −Resume%</div>
-        <div class="fs-arr">→</div>
-        <div class="fs-box run">Trading</div>
+        <div class="fs-box run">Active</div><div class="fs-arr">→</div>
+        <div class="fs-box stop">IL &lt; −Stop%</div><div class="fs-arr">→</div>
+        <div class="fs-box wait">Paused</div><div class="fs-arr">→</div>
+        <div class="fs-box go">IL &gt; −Resume%</div><div class="fs-arr">→</div>
+        <div class="fs-box run">Active</div>
       </div>
-      <p class="hint">Pool halts the moment IL falls below −Stop%. Automatically restarts when IL recovers above −Resume%. Set both to 0 to run without protection.</p>
     </section>
 
-    <!-- Alpha Protection -->
     <section class="card card-purple">
-      <h2>🛡️ Alpha-Protection Mode</h2>
-      <label class="checkbox">
-        <input id="alphaProtectEnabled" type="checkbox" checked/>
-        Enable alpha protection
-      </label>
-      <label class="field" style="margin-top:8px">Activate after cash ROI reaches (%)
+      <h2>🛡️ Alpha-Protection</h2>
+      <label class="checkbox"><input id="alphaProtectEnabled" type="checkbox" checked/> Enable alpha protection</label>
+      <label class="field" style="margin-top:8px">Activate after cash ROI (%)
         <input id="alphaProtectThresholdPct" type="number" min="0" max="50" step="0.1" value="0.3"/>
-        <span class="sub-hint">0 = protect from the very first hour</span>
+        <span class="sub-hint">0 = protect from hour 1</span>
       </label>
       <div class="protect-flow">
-        <div class="pf-row"><span class="pf-num">①</span><span>Cash profit grows until it crosses the Activate threshold</span></div>
-        <div class="pf-row"><span class="pf-num">②</span><span>Protection active — monitor whether <em>|IL%| ≥ Cash ROI%</em></span></div>
-        <div class="pf-row"><span class="pf-num">③</span><span>If IL threatens to erase alpha → halt. Total value ≈ hold value (net zero)</span></div>
-        <div class="pf-row"><span class="pf-num">④</span><span>When IL retreats below cash ROI → resume harvesting</span></div>
+        <div class="pf-row"><span class="pf-num">①</span><span>Cash profit builds until it crosses Activate %</span></div>
+        <div class="pf-row"><span class="pf-num">②</span><span>Watch whether <em>|IL%| ≥ Cash ROI%</em></span></div>
+        <div class="pf-row"><span class="pf-num">③</span><span>If yes → halt. Total value ≈ hold (net zero)</span></div>
+        <div class="pf-row"><span class="pf-num">④</span><span>When IL retreats → resume harvesting</span></div>
       </div>
     </section>
 
-    <!-- CSV format -->
     <section class="card card-flat">
       <h2>CSV Format</h2>
       <ul>
         <li><code>date</code> — <code>2025-01-01 09:15:00+05:30</code></li>
-        <li><code>close</code> — closing price in ₹</li>
+        <li><code>close</code> — price in ₹</li>
         <li><code>volume</code> — trade volume</li>
-        <li>1-minute bars are merged to hourly automatically</li>
+        <li>1-minute bars merged to hourly automatically</li>
       </ul>
     </section>
 
   </aside>
 
   <section class="content">
-
     <div id="statusBanner" class="status-banner status-info">
       <strong>INFO:</strong> <span>Upload two 1-minute CSV files and click Run Simulation.</span>
     </div>
-
     <div id="haltBanner" class="halt-banner hidden"></div>
 
-    <!-- Results -->
     <div class="card">
       <div class="card-head">
-        <div><p class="eyebrow">Results</p><h2 id="pairHeading">Reliance  ↔  Kotak Bank</h2></div>
-        <button id="downloadCsv" class="btn-secondary hidden">⬇ Download CSV</button>
+        <div><p class="eyebrow">Results — Uniswap V3 Concentrated Liquidity</p><h2 id="pairHeading">Reliance  ↔  Kotak Bank</h2></div>
+        <button id="downloadCsv" class="btn-secondary hidden">⬇ CSV</button>
       </div>
-      <div id="metricsGrid" class="metric-grid">
-        <div class="empty-state"><p>Upload CSV files and run the simulation.</p></div>
-      </div>
+      <div id="metricsGrid" class="metric-grid"><div class="empty-state"><p>Upload CSV files and run.</p></div></div>
     </div>
 
-    <!-- Performance -->
     <div class="card">
-      <div class="card-head"><div>
-        <p class="eyebrow">Performance Summary</p>
-        <h2>Harvest · Risk · Quality · Virtual Depth</h2>
-      </div></div>
+      <div class="card-head"><div><p class="eyebrow">Performance Summary</p><h2>Harvest · Risk · Quality · V3 Concentration</h2></div></div>
       <div id="perfPanel"><div class="empty-state"><p>Run simulation first.</p></div></div>
     </div>
 
-    <!-- Charts -->
     <div class="card">
-      <div class="card-head"><div>
-        <p class="eyebrow">Portfolio Value</p>
-        <h2>AMM Total · Hold · Cash — yellow lines = trades, red shading = halted</h2>
-      </div></div>
+      <div class="card-head"><div><p class="eyebrow">Portfolio Value</p><h2>AMM Total · Hold · Cash Profit · yellow = swap · red shading = halted</h2></div></div>
       <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
     </div>
 
     <div class="card">
-      <div class="card-head"><div>
-        <p class="eyebrow">Net Alpha &amp; IL</p>
-        <h2>Alpha ₹ · IL% (scaled) — red shading = halted</h2>
-      </div></div>
+      <div class="card-head"><div><p class="eyebrow">Net Alpha &amp; IL</p><h2>Alpha ₹ · IL% (scaled) · red shading = halted</h2></div></div>
       <div class="chart-wrap"><canvas id="alphaChart"></canvas></div>
     </div>
 
-    <!-- Trade table -->
     <div class="card">
       <div class="card-head">
-        <div><p class="eyebrow">Trade History</p><h2>Every swap with full P&amp;L</h2></div>
+        <div><p class="eyebrow">Trade History</p><h2>V3 swaps with L, dx/dy, full P&amp;L breakdown</h2></div>
         <span id="swapCount" class="count-pill hidden"></span>
       </div>
       <div id="tableWrap"><div class="empty-state"><p>No trades yet.</p></div></div>
     </div>
-
   </section>
 </main>
 <script type="module" src="/app.js"></script>
