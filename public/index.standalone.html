@@ -1,0 +1,1468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Uniswap V3 Concentrated Liquidity — NSE AMM</title>
+  <style>
+:root{color-scheme:dark;--bg:#07111f;--panel:rgba(13,23,41,0.92);--bord:rgba(148,163,184,0.16);--text:#e2e8f0;--muted:#94a3b8;--accent:#38bdf8;--a2:#818cf8;--pos:#22c55e;--neg:#f97316;--danger:#f43f5e;--gold:#facc15;--purple:#a78bfa;--green:#22c55e;}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html,body{min-height:100%;font-family:Arial,Helvetica,sans-serif;background:radial-gradient(ellipse at top,rgba(56,189,248,.10),transparent 30%),linear-gradient(180deg,#020617,var(--bg));color:var(--text);}
+button,input{font:inherit;}
+.shell{display:grid;grid-template-columns:370px 1fr;gap:20px;padding:20px;min-width:0;}
+.sidebar,.content{display:flex;flex-direction:column;gap:14px;min-width:0;}
+.content{overflow:hidden;}
+.card{background:var(--panel);border:1px solid var(--bord);border-radius:14px;padding:15px;backdrop-filter:blur(10px);box-shadow:0 8px 28px rgba(15,23,42,.18);min-width:0;}
+.card-blue  {border-color:rgba(56,189,248,.26); background:rgba(56,189,248,.03);}
+.card-red   {border-color:rgba(244,63,94,.26);  background:rgba(244,63,94,.03);}
+.card-purple{border-color:rgba(167,139,250,.26);background:rgba(167,139,250,.03);}
+.card-green {border-color:rgba(34,197,94,.28);  background:rgba(34,197,94,.03);}
+.card-flat  {background:rgba(15,23,42,.40);}
+.card-head  {display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;flex-wrap:wrap;gap:8px;}
+.brand h1{font-size:1.5rem;line-height:1.1;margin-bottom:5px;}
+.lede{color:var(--muted);font-size:0.80rem;line-height:1.55;}
+.eyebrow{font-size:0.67rem;letter-spacing:.13em;text-transform:uppercase;color:var(--accent);margin-bottom:3px;}
+h2{font-size:0.93rem;margin-bottom:8px;}h3{font-size:0.86rem;margin-bottom:8px;}
+.hint{color:var(--muted);font-size:0.74rem;line-height:1.5;margin-top:6px;}
+.sub-hint{display:block;color:var(--muted);font-size:0.69rem;margin-top:2px;}
+.field{display:flex;flex-direction:column;gap:4px;font-size:0.81rem;color:var(--muted);margin-bottom:8px;}
+.field input{width:100%;background:rgba(15,23,42,.85);border:1px solid rgba(148,163,184,.16);color:var(--text);border-radius:9px;padding:6px 10px;}
+.upload{display:flex;position:relative;overflow:hidden;border:1px dashed rgba(56,189,248,.32);border-radius:10px;background:rgba(14,165,233,.05);padding:10px;text-align:center;cursor:pointer;font-size:0.82rem;color:var(--muted);min-height:48px;align-items:center;justify-content:center;}
+.upload input{position:absolute;inset:0;opacity:0;cursor:pointer;}
+.checkbox{display:flex;align-items:center;gap:7px;font-size:0.82rem;color:var(--muted);margin-bottom:8px;cursor:pointer;}
+.checkbox input{width:14px;height:14px;flex-shrink:0;}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.btn-primary{display:block;width:100%;margin-top:6px;border:none;border-radius:10px;padding:10px;background:linear-gradient(135deg,var(--accent),var(--a2));color:#020617;font-size:0.93rem;font-weight:700;cursor:pointer;}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed;}
+.btn-secondary{border:1px solid rgba(56,189,248,.20);border-radius:10px;padding:7px 12px;background:rgba(56,189,248,.07);color:var(--text);font-weight:600;cursor:pointer;white-space:nowrap;}
+.info-box{border-radius:8px;padding:8px 10px;background:rgba(56,189,248,.07);border:1px solid rgba(56,189,248,.16);font-size:0.74rem;color:var(--muted);line-height:1.5;}
+.info-box strong{color:var(--text);}
+.band-info{font-size:0.76rem;color:var(--pos);margin-top:5px;font-weight:500;}
+.band-table{margin-top:8px;border:1px solid rgba(56,189,248,.18);border-radius:8px;overflow:hidden;}
+.bt-row{display:grid;grid-template-columns:1fr 1fr 1fr;padding:5px 10px;font-size:0.73rem;border-bottom:1px solid rgba(56,189,248,.10);}
+.bt-row:last-child{border-bottom:none;}
+.bt-row.head{font-size:0.68rem;color:var(--muted);background:rgba(56,189,248,.06);}
+.status-banner{border-radius:11px;padding:10px 13px;border:1px solid transparent;font-size:0.83rem;line-height:1.5;}
+.status-banner strong{color:var(--text);}
+.status-info   {background:rgba(59,130,246,.09);border-color:rgba(59,130,246,.20);}
+.status-success{background:rgba(34,197,94,.09); border-color:rgba(34,197,94,.20);}
+.status-warning{background:rgba(250,204,21,.09);border-color:rgba(250,204,21,.20);}
+.status-error  {background:rgba(249,115,22,.09);border-color:rgba(249,115,22,.20);}
+.halt-banner{display:flex;align-items:flex-start;gap:10px;border-radius:11px;padding:11px 13px;border:1px solid transparent;}
+.halt-banner.halted {background:rgba(244,63,94,.10); border-color:rgba(244,63,94,.24);}
+.halt-banner.resumed{background:rgba(34,197,94,.08);  border-color:rgba(34,197,94,.20);}
+.halt-banner.protect{background:rgba(167,139,250,.08);border-color:rgba(167,139,250,.20);}
+.hb-icon{font-size:1.2rem;flex-shrink:0;margin-top:1px;}
+.hb-lines{display:flex;flex-direction:column;gap:2px;}
+.hb-lines span{font-size:0.80rem;color:var(--muted);line-height:1.4;}
+.hb-lines strong{font-size:0.84rem;display:block;margin-bottom:1px;color:var(--text);}
+.halted  .hb-lines strong{color:var(--danger);}
+.resumed .hb-lines strong{color:var(--pos);}
+.protect .hb-lines strong{color:var(--purple);}
+.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:9px;}
+.metric-card{border-radius:11px;padding:10px 9px;background:rgba(15,23,42,.68);border:1px solid rgba(148,163,184,.08);display:flex;flex-direction:column;gap:4px;}
+.metric-card.hl{border-color:rgba(56,189,248,.28);background:rgba(56,189,248,.06);}
+.mc-label{color:var(--muted);font-size:0.70rem;line-height:1.3;}
+.mc-value{font-size:1.04rem;font-weight:700;word-break:break-word;}
+.mc-delta{font-size:0.74rem;}
+.mc-delta.pos{color:var(--pos);}.mc-delta.neg{color:var(--neg);}
+
+/* ── Performance grid ──────────────────────────────────────────────────────── */
+.perf-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:11px;}
+.perf-box{background:rgba(15,23,42,.52);border-radius:11px;border:1px solid rgba(148,163,184,.08);padding:11px 12px;}
+
+/* Reinvest perf box — green accent */
+.perf-box-reinvest{
+  border-color:rgba(34,197,94,.22);
+  background:rgba(34,197,94,.04);
+}
+.perf-box-reinvest h3{color:#86efac;}
+
+.pr{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;font-size:0.77rem;}
+.pr span{color:var(--muted);}.pr strong{font-size:0.83rem;}
+.pr .pos{color:var(--pos);}.pr .neg{color:var(--neg);}
+.pbadge{margin-top:8px;border-radius:6px;padding:4px 7px;font-size:0.70rem;line-height:1.4;border:1px solid;}
+.pbadge.good{background:rgba(34,197,94,.10); border-color:rgba(34,197,94,.20);  color:#86efac;}
+.pbadge.ok  {background:rgba(250,204,21,.09);border-color:rgba(250,204,21,.18); color:#fde68a;}
+.pbadge.bad {background:rgba(244,63,94,.09); border-color:rgba(244,63,94,.18);  color:#fca5a5;}
+
+/* ── Charts ────────────────────────────────────────────────────────────────── */
+.chart-wrap{width:100%;height:190px;}
+canvas{width:100%!important;height:100%!important;display:block;}
+
+/* ── Flow strips ───────────────────────────────────────────────────────────── */
+.flow-strip{display:flex;align-items:center;gap:0;flex-wrap:wrap;margin:10px 0 6px;overflow-x:auto;}
+.fs-box{flex-shrink:0;border-radius:7px;padding:4px 8px;font-size:0.68rem;font-weight:600;text-align:center;border:1px solid;}
+.fs-box.run {background:rgba(34,197,94,.12); border-color:rgba(34,197,94,.22);  color:#86efac;}
+.fs-box.stop{background:rgba(244,63,94,.12); border-color:rgba(244,63,94,.22);  color:#fca5a5;}
+.fs-box.wait{background:rgba(148,163,184,.10);border-color:rgba(148,163,184,.20);color:var(--muted);}
+.fs-box.go  {background:rgba(34,197,94,.12); border-color:rgba(34,197,94,.22);  color:#86efac;}
+.fs-arr{font-size:0.65rem;color:var(--muted);padding:0 3px;flex-shrink:0;}
+
+/* ── Protect / reinvest flow list ──────────────────────────────────────────── */
+.protect-flow{margin-top:10px;display:flex;flex-direction:column;gap:6px;}
+.pf-row{display:flex;gap:8px;align-items:flex-start;font-size:0.76rem;color:var(--muted);}
+.pf-num{flex-shrink:0;width:19px;height:19px;border-radius:50%;background:rgba(167,139,250,.18);border:1px solid rgba(167,139,250,.28);color:var(--purple);font-size:0.66rem;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:1px;}
+
+/* Green step numbers for reinvest card */
+.card-green .pf-num{background:rgba(34,197,94,.16);border-color:rgba(34,197,94,.28);color:#86efac;}
+
+.pf-row em{color:var(--gold);font-style:normal;}
+
+/* ── Trade table ───────────────────────────────────────────────────────────── */
+.tscroll{overflow-x:auto;}
+table{width:100%;border-collapse:collapse;min-width:1200px;}
+th,td{padding:5px 7px;text-align:left;border-bottom:1px solid rgba(148,163,184,.06);font-size:0.72rem;white-space:nowrap;}
+th{color:var(--muted);font-size:0.68rem;}
+td.r,th.r{text-align:right;font-variant-numeric:tabular-nums;}
+td.pos{color:var(--pos);font-weight:600;}td.neg{color:var(--neg);}
+
+/* Halted swap rows */
+.tr-halted td{background:rgba(244,63,94,.04);}
+
+/* ── Reinvestment rows ─────────────────────────────────────────────────────── */
+.tr-reinvest td{
+  background:rgba(34,197,94,.05);
+  border-bottom:1px solid rgba(34,197,94,.12);
+}
+.tr-reinvest td.r{color:#86efac;}
+
+.table-note{color:var(--muted);font-size:0.73rem;margin-bottom:6px;}
+
+/* ── Pills ─────────────────────────────────────────────────────────────────── */
+.pill{border-radius:4px;padding:1px 5px;font-size:0.64rem;font-weight:700;}
+.pill.halt{background:rgba(244,63,94,.16);color:#fca5a5;}
+.pill.reinvest-pill{background:rgba(34,197,94,.16);color:#86efac;}
+
+.count-pill{border-radius:999px;padding:3px 8px;background:rgba(129,140,248,.13);color:#c7d2fe;font-size:0.75rem;}
+.empty-state{min-height:90px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:0.83rem;}
+.hidden{display:none!important;}
+code{color:#bfdbfe;background:rgba(191,219,254,.07);border-radius:3px;padding:1px 4px;}
+.card-flat ul{padding-left:15px;color:var(--muted);font-size:0.78rem;line-height:1.8;}
+@media(max-width:1100px){.shell{grid-template-columns:1fr;}}
+
+  </style>
+</head>
+<body>
+<main class="shell">
+  <aside class="sidebar">
+
+    <div class="brand">
+      <p class="eyebrow">Uniswap V3 Mathematics · NSE Stocks · Real IL · Alpha Reinvestment</p>
+      <h1>V3 Concentrated Pool</h1>
+      <p class="lede">
+        Fixed concentrated liquidity band. Swap deltas from
+        <code>Δx = L·(1/√r_new − 1/√r_old)</code> and <code>Δy = L·(√r_new − √r_old)</code>.
+        Alpha reinvestment compounds L over time — each lot purchased at the
+        current pool ratio re-deploys cash profit back into the pool.
+      </p>
+    </div>
+
+    <!-- ── Datasets ──────────────────────────────────────────────────────── -->
+    <section class="card">
+      <h2>Datasets</h2>
+      <label class="upload">
+        <span id="asset1FileName">Upload Asset 1 — 1-min CSV</span>
+        <input id="asset1File" type="file" accept=".csv,text/csv"/>
+      </label>
+      <label class="field" style="margin-top:6px">Label
+        <input id="asset1Label" type="text" value="Reliance"/>
+      </label>
+      <label class="upload" style="margin-top:8px">
+        <span id="asset2FileName">Upload Asset 2 — 1-min CSV</span>
+        <input id="asset2File" type="file" accept=".csv,text/csv"/>
+      </label>
+      <label class="field" style="margin-top:6px">Label
+        <input id="asset2Label" type="text" value="Kotak Bank"/>
+      </label>
+      <button id="runSimulation" class="btn-primary">▶ Run Simulation</button>
+    </section>
+
+    <!-- ── Capital ───────────────────────────────────────────────────────── -->
+    <section class="card">
+      <h2>Capital</h2>
+      <label class="field">Capital (₹)
+        <input id="realCapital" type="number" min="10000" step="100000" value="2000000"/>
+        <span class="sub-hint">Split via V3 reserves at opening ratio to initialise L</span>
+      </label>
+    </section>
+
+    <!-- ── Concentration Band ────────────────────────────────────────────── -->
+    <section class="card card-blue">
+      <h2>🎯 Concentration Band</h2>
+      <label class="field">Band Half-Width ± (%)
+        <input id="bandPct" type="number" min="1" max="99" step="1" value="20"/>
+      </label>
+      <div id="bandLabel" class="band-info"></div>
+      <div class="info-box" style="margin-top:8px">
+        <strong>Fixed band.</strong> The band stays at ±% around the
+        initialisation price. When price exits the range a recenter fires —
+        L is recomputed from current portfolio value, no brokerage charged.<br/>
+        Formula: concentration = 1 / (1 − √(p_lower/p_upper))
+      </div>
+      <div class="band-table">
+        <div class="bt-row head"><span>Band ±</span><span>Total range</span><span>Amplification</span></div>
+        <div class="bt-row"><span>5%</span><span>10%</span><span>~10.5×</span></div>
+        <div class="bt-row"><span>10%</span><span>20%</span><span>~5.4×</span></div>
+        <div class="bt-row"><span>20%</span><span>40%</span><span>~2.9×</span></div>
+        <div class="bt-row"><span>50%</span><span>100%</span><span>~1.7×</span></div>
+      </div>
+    </section>
+
+    <!-- ── Brokerage ─────────────────────────────────────────────────────── -->
+    <section class="card">
+      <h2>Brokerage</h2>
+      <div class="two-col">
+        <label class="field">Buy (%)
+          <input id="buyBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
+        </label>
+        <label class="field">Sell (%)
+          <input id="sellBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
+        </label>
+      </div>
+      <p class="hint">Each swap executes only when revenue − cost − brokerage &gt; 0.</p>
+    </section>
+
+    <!-- ── Alpha Reinvestment ────────────────────────────────────────────── -->
+    <section class="card card-green">
+      <h2>🔄 Alpha Reinvestment</h2>
+      <label class="checkbox">
+        <input id="reinvestEnabled" type="checkbox" checked/>
+        Enable alpha reinvestment
+      </label>
+      <p class="hint" style="margin-top:6px">
+        When accumulated cash alpha can buy ≥ 1 lot — defined as
+        <strong>1 share Asset1 + round(Y/X) shares Asset2</strong> at the
+        current pool ratio — those shares are purchased and added to the pool.
+        L is recomputed from the new total holdings, compounding fee generation
+        on every future swap.
+      </p>
+      <label class="field" style="margin-top:10px">Reinvestment Brokerage (%)
+        <input id="reinvestBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
+        <span class="sub-hint">Applied on both stock purchases (two buy orders)</span>
+      </label>
+      <div class="protect-flow" style="margin-top:10px">
+        <div class="pf-row">
+          <span class="pf-num">①</span>
+          <span>Cash alpha accumulates from profitable AMM swaps</span>
+        </div>
+        <div class="pf-row">
+          <span class="pf-num">②</span>
+          <span>
+            Lot = 1 share A + <em>round(Y/X)</em> shares B at current ratio.<br/>
+            Example: pool 50 : 150 → lot = 1 A + 3 B
+          </span>
+        </div>
+        <div class="pf-row">
+          <span class="pf-num">③</span>
+          <span>
+            N = floor(cash / lot cost inc. brok). All N lots bought atomically.
+          </span>
+        </div>
+        <div class="pf-row">
+          <span class="pf-num">④</span>
+          <span>
+            xShares += N, yShares += N × round(Y/X). Hold benchmark expands
+            symmetrically — IL invariant preserved at reinvestment instant.
+          </span>
+        </div>
+        <div class="pf-row">
+          <span class="pf-num">⑤</span>
+          <span>
+            L recomputed from new pool capital → higher future fee harvest.
+            <em>Compounds indefinitely while swaps generate alpha.</em>
+          </span>
+        </div>
+      </div>
+      <div class="info-box" style="margin-top:10px">
+        <strong>Accounting note:</strong> The hold benchmark (xHold, yHold) grows
+        with each reinvestment, so IL reflects only AMM-induced divergence, not
+        reinvestment timing. vsHold = totalValue − holdValue is always apples-to-apples.
+      </div>
+    </section>
+
+    <!-- ── IL Stop-Loss ──────────────────────────────────────────────────── -->
+    <section class="card card-red">
+      <h2>🛑 IL Stop-Loss &amp; Auto-Resume</h2>
+      <div class="two-col">
+        <label class="field">Stop at IL (%)
+          <input id="ilStopLossPct" type="number" min="0" max="100" step="0.5" value="0"/>
+          <span class="sub-hint">0 = disabled</span>
+        </label>
+        <label class="field">Resume at IL (%)
+          <input id="ilResumePct" type="number" min="0" max="100" step="0.5" value="0"/>
+          <span class="sub-hint">0 = stay halted</span>
+        </label>
+      </div>
+      <div class="flow-strip">
+        <div class="fs-box run">Active</div><div class="fs-arr">→</div>
+        <div class="fs-box stop">IL &lt; −Stop%</div><div class="fs-arr">→</div>
+        <div class="fs-box wait">Paused</div><div class="fs-arr">→</div>
+        <div class="fs-box go">IL &gt; −Resume%</div><div class="fs-arr">→</div>
+        <div class="fs-box run">Active</div>
+      </div>
+      <p class="hint">Note: reinvestment continues even when swaps are halted —
+        it only deploys idle cash, it does not execute new AMM swaps.</p>
+    </section>
+
+    <!-- ── Alpha Protection ──────────────────────────────────────────────── -->
+    <section class="card card-purple">
+      <h2>🛡️ Alpha-Protection</h2>
+      <label class="checkbox">
+        <input id="alphaProtectEnabled" type="checkbox" checked/>
+        Enable alpha protection
+      </label>
+      <label class="field" style="margin-top:8px">Activate after cash ROI (%)
+        <input id="alphaProtectThresholdPct" type="number" min="0" max="50" step="0.1" value="0.3"/>
+        <span class="sub-hint">0 = protect from hour 1</span>
+      </label>
+      <div class="protect-flow">
+        <div class="pf-row"><span class="pf-num">①</span><span>Cash profit builds until it crosses Activate %</span></div>
+        <div class="pf-row"><span class="pf-num">②</span><span>Watch whether <em>|IL%| ≥ Cash ROI%</em></span></div>
+        <div class="pf-row"><span class="pf-num">③</span><span>If yes → halt swaps. Total value ≈ hold (net zero)</span></div>
+        <div class="pf-row"><span class="pf-num">④</span><span>When IL retreats → resume harvesting</span></div>
+      </div>
+    </section>
+
+    <!-- ── CSV Format ────────────────────────────────────────────────────── -->
+    <section class="card card-flat">
+      <h2>CSV Format</h2>
+      <ul>
+        <li><code>date</code> — <code>2025-01-01 09:15:00+05:30</code></li>
+        <li><code>close</code> — price in ₹</li>
+        <li><code>volume</code> — trade volume</li>
+        <li>1-minute bars merged to hourly automatically</li>
+      </ul>
+    </section>
+
+  </aside><!-- /sidebar -->
+
+  <!-- ── Content ─────────────────────────────────────────────────────────── -->
+  <section class="content">
+
+    <div id="statusBanner" class="status-banner status-info">
+      <strong>INFO:</strong> <span>Upload two 1-minute CSV files and click Run Simulation.</span>
+    </div>
+    <div id="haltBanner" class="halt-banner hidden"></div>
+
+    <!-- Metrics -->
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">Results — Uniswap V3 Concentrated Liquidity + Alpha Reinvestment</p>
+          <h2 id="pairHeading">Reliance  ↔  Kotak Bank</h2>
+        </div>
+        <button id="downloadCsv" class="btn-secondary hidden">⬇ CSV</button>
+      </div>
+      <div id="metricsGrid" class="metric-grid">
+        <div class="empty-state"><p>Upload CSV files and run.</p></div>
+      </div>
+    </div>
+
+    <!-- Performance -->
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">Performance Summary</p>
+          <h2>Harvest · Risk · Quality · V3 Concentration · 🔄 Reinvestment</h2>
+        </div>
+      </div>
+      <div id="perfPanel"><div class="empty-state"><p>Run simulation first.</p></div></div>
+    </div>
+
+    <!-- Equity chart -->
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">Portfolio Value</p>
+          <h2>AMM Total · Hold · Cash Profit &nbsp;|&nbsp; 🟡 swap &nbsp; 🟢 reinvest &nbsp; 🔴 halted</h2>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
+    </div>
+
+    <!-- Alpha / IL chart -->
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">Net Alpha &amp; IL</p>
+          <h2>Alpha ₹ · IL% (scaled) &nbsp;|&nbsp; 🟢 green bar = reinvestment event</h2>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="alphaChart"></canvas></div>
+    </div>
+
+    <!-- L-growth chart -->
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">Liquidity Parameter L — Compounding</p>
+          <h2>L grows each time alpha is reinvested into the pool &nbsp;|&nbsp; 🟢 = reinvestment event</h2>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="lGrowthChart"></canvas></div>
+    </div>
+
+    <!-- Trade table -->
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">Event History — Swaps &amp; Reinvestments</p>
+          <h2>V3 swap P&amp;L · 🔄 reinvestment lots · L growth · combined ledger</h2>
+        </div>
+        <span id="swapCount" class="count-pill hidden"></span>
+      </div>
+      <div id="tableWrap"><div class="empty-state"><p>No trades yet.</p></div></div>
+    </div>
+
+  </section>
+</main>
+<script type="module">
+/* ─── simulation-core.js ─────────────────────────────────────────────────── */
+// simulation-core.js  —  Uniswap V3 Concentrated Liquidity Pool
+//                        + Alpha-Driven Position Reinvestment
+// ─────────────────────────────────────────────────────────────────────────────
+//
+//  UNISWAP V3 MATHEMATICS  (Adams et al. 2021)
+//  ─────────────────────────────────────────────
+//  Reference: https://uniswap.org/whitepaper-v3.pdf
+//
+//  Full-range AMM (x*y=k) provides liquidity at every price.
+//  V3 concentrates all liquidity within [p_lower, p_upper],
+//  amplifying fees by 1/(1 - sqrt(p_lower/p_upper)).
+//
+//  Core invariant within the range:
+//    (x + L/√p_upper) × (y + L×√p_lower) = L²
+//
+//  Virtual reserves at current price p (within [p_a, p_b]):
+//    x_virtual = L × (1/√p   − 1/√p_b)    [Asset1]
+//    y_virtual = L × (√p     −   √p_a)    [Asset2]
+//
+//  SWAP DELTA (price ratio moves r_old → r_new within [r_a, r_b]):
+//    Δx = L × (1/√r_new − 1/√r_old)
+//    Δy = L × (√r_new   −   √r_old)
+//
+//  ALPHA REINVESTMENT MECHANIC:
+//  ────────────────────────────
+//  Lot definition: lotX = 1 share of Asset1,
+//                  lotY = max(1, round(yShares / xShares)) shares of Asset2
+//  This preserves the current pool ratio on each reinvestment.
+//
+//  Trigger: cashProfit ≥ (lotX × p1 + lotY × p2) × (1 + reinvestBrok)
+//  Action:
+//    nLots = floor(cashProfit / lotCost)
+//    addX  = nLots × lotX
+//    addY  = nLots × lotY
+//    xShares += addX;  yShares += addY   → pool grows
+//    xHold   += addX;  yHold   += addY   → hold benchmark grows symmetrically
+//    cashProfit -= (rawCost + brokerage)
+//    L = computeL(xShares×p1 + yShares×p2, p1, p2, rCur, rLow, rHigh)
+//
+//  Invariant after reinvestment:
+//    IL% is unchanged at the instant of reinvestment (symmetric delta cancels).
+//    Going forward, future swaps continue to generate IL relative to the
+//    expanded hold benchmark.
+//
+//  IL STOP-LOSS + AUTO-RESUME:
+//  Halt swaps when IL% < −ilStopPct. Resume when IL% > −ilResumePct.
+//
+//  ALPHA PROTECTION:
+//  After cashROI% ≥ alphaProtectThresholdPct, halt if |IL%| ≥ cashROI%.
+//  Resume when |IL%| < cashROI%.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── CSV ──────────────────────────────────────────────────────────────────────
+
+function splitCsvLine(line) {
+  const cells = []; let cur = '', q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { if (q && line[i+1] === '"') { cur += '"'; i++; } else q = !q; }
+    else if (c === ',' && !q) { cells.push(cur); cur = ''; }
+    else cur += c;
+  }
+  cells.push(cur); return cells;
+}
+
+function parseCsv(text) {
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return [];
+  const headers = splitCsvLine(lines[0]).map(h => h.trim().toLowerCase());
+  return lines.slice(1).map(line => {
+    const cells = splitCsvLine(line);
+    return headers.reduce((row, h, i) => { row[h] = (cells[i] || '').trim(); return row; }, {});
+  });
+}
+
+function normalizeRows(rows) {
+  return rows
+    .map(r => ({ date: new Date(r.date), close: +r.close, volume: +r.volume }))
+    .filter(r => !isNaN(r.date) && isFinite(r.close) && r.close > 0 && isFinite(r.volume))
+    .sort((a, b) => a.date - b.date);
+}
+
+// ─── Hourly merge ─────────────────────────────────────────────────────────────
+
+function buildHourly(a1, a2) {
+  const map = new Map();
+  let i = 0, j = 0;
+  while (i < a1.length && j < a2.length) {
+    const t1 = a1[i].date.getTime(), t2 = a2[j].date.getTime();
+    if (t1 === t2) {
+      const key = (() => { const d = new Date(a1[i].date); d.setMinutes(0,0,0); return d.toISOString(); })();
+      if (!map.has(key)) map.set(key, { date: new Date(key), c1: a1[i].close, c2: a2[j].close });
+      const b = map.get(key);
+      b.c1 = a1[i].close; b.c2 = a2[j].close;
+      i++; j++;
+    } else if (t1 < t2) i++; else j++;
+  }
+  return [...map.values()].sort((a, b) => a.date - b.date);
+}
+
+function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+
+// ─── V3 Core: Liquidity parameter ─────────────────────────────────────────────
+
+function computeL(capital, p1, p2, r, rLow, rHigh) {
+  const sr  = Math.sqrt(clamp(r, rLow, rHigh));
+  const sra = Math.sqrt(rLow);
+  const srb = Math.sqrt(rHigh);
+  const denom = (1/sr - 1/srb) * p1 + (sr - sra) * p2;
+  return denom > 1e-10 ? capital / denom : 0;
+}
+
+// ─── V3 Core: Virtual reserves ────────────────────────────────────────────────
+
+function v3Reserves(L, r, rLow, rHigh) {
+  const sr  = Math.sqrt(clamp(r, rLow, rHigh));
+  const sra = Math.sqrt(rLow);
+  const srb = Math.sqrt(rHigh);
+  return {
+    x: L * (1/sr - 1/srb),
+    y: L * (sr   - sra),
+  };
+}
+
+// ─── V3 Core: Swap delta ───────────────────────────────────────────────────────
+
+function v3SwapDelta(L, rOld, rNew) {
+  const srOld = Math.sqrt(rOld);
+  const srNew = Math.sqrt(rNew);
+  return {
+    dx: L * (1/srNew - 1/srOld),
+    dy: L * (srNew   -   srOld),
+  };
+}
+
+// ─── Performance summary ───────────────────────────────────────────────────────
+
+function buildPerformanceSummary(swapRecords, equityCurve, results) {
+  const ANNUALISE = Math.sqrt(252 * 6);
+
+  const grossFees     = swapRecords.reduce((s, r) => s + (r.gross ?? 0), 0);
+  const totalFriction = results.totalBrokerage;
+  const frictionRatio = grossFees > 0 ? totalFriction / grossFees : 1;
+  const successful    = swapRecords.filter(r => (r.net ?? 0) > 0).length;
+  const successRate   = swapRecords.length > 0 ? successful / swapRecords.length : 0;
+
+  // Alpha drawdown on equity curve
+  const alpha = equityCurve.map(p => (p.poolValue ?? 0) - (p.holdValue ?? 0));
+  let peak = alpha[0] ?? 0, maxDD = 0;
+  for (const v of alpha) { if (v > peak) peak = v; if (v - peak < maxDD) maxDD = v - peak; }
+  const maxDDPct = equityCurve[0]?.holdValue > 0 ? maxDD / equityCurve[0].holdValue * 100 : 0;
+
+  // Alpha Sharpe
+  const aRets = alpha.slice(1).map((v, i) => v - alpha[i]);
+  const mr = aRets.length ? aRets.reduce((s, v) => s + v, 0) / aRets.length : 0;
+  let v2 = 0; for (const v of aRets) v2 += (v - mr) ** 2;
+  const sd = aRets.length > 1 ? Math.sqrt(v2 / (aRets.length - 1)) : 1e-9;
+  const alphaSharpe = sd > 1e-12 ? (mr / sd) * ANNUALISE : 0;
+
+  const rCenter = results.rCenter ?? 1;
+  const rLow    = results.rLow    ?? rCenter * 0.8;
+  const rHigh   = results.rHigh   ?? rCenter * 1.2;
+  const concentrationFactor = rLow > 0 ? 1 / (1 - Math.sqrt(rLow / rHigh)) : 1;
+
+  // Reinvest narrative
+  const rc = results.reinvestCount ?? 0;
+  const rv = results.totalReinvestedRaw ?? 0;
+  const lg = results.LGrowthFactor ?? 1;
+  const reinvestNarrative = rc > 0
+    ? `${rc} lots reinvested · ₹${(rv/1e5).toFixed(2)}L deployed · L grew ${lg.toFixed(2)}× · compounding active`
+    : 'No reinvestments yet — accumulate alpha to trigger';
+
+  return {
+    grossFees, totalFriction,
+    netSwapIncome: grossFees - totalFriction,
+    frictionRatio, frictionRatioPct: frictionRatio * 100,
+    successfulSwaps: successful, totalSwaps: swapRecords.length,
+    successRate, successRatePct: successRate * 100,
+    maxDrawdownINR: maxDD, maxDrawdownPct: maxDDPct,
+    alphaSharpe, concentrationFactor,
+    unrealizedIL: results.ilINR,
+    netAlphaFinal: results.vsHold,
+    reinvestCount: rc,
+    totalReinvestedRaw: rv,
+    totalReinvestBrok: results.totalReinvestBrok ?? 0,
+    LInitial: results.LInitial ?? results.L,
+    LFinal:   results.L,
+    LGrowthFactor: lg,
+    narrative: {
+      friction: frictionRatio < 0.10 ? 'GOOD — friction < 10% of gross'
+               : frictionRatio < 0.25 ? 'MODERATE'
+               : 'HIGH — band may be too tight for this brokerage',
+      swapQuality: successRate >= 1.0 ? 'PERFECT — every swap profitable'
+                  : successRate > 0.85 ? 'EXCELLENT — >85% profitable'
+                  : successRate > 0.70 ? 'GOOD — >70% profitable'
+                  : 'LOW — widen band or reduce brokerage',
+      ilStatus: results.ilPct >= 0 ? 'POSITIVE — pool assets exceed hold value'
+               : `NEGATIVE — ${Math.abs(results.ilINR).toLocaleString('en-IN', { maximumFractionDigits: 0 })} below hold`,
+      concentration: `${concentrationFactor.toFixed(1)}× amplification vs full-range pool`,
+      reinvest: reinvestNarrative,
+    },
+  };
+}
+
+// ─── Main simulation ───────────────────────────────────────────────────────────
+
+function runAlmSimulation(df1, df2, realCapital, config = {}) {
+  const a1 = normalizeRows(df1);
+  const a2 = normalizeRows(df2);
+  if (!a1.length || !a2.length)
+    return { error: 'Both CSV files must have valid date, close, and volume columns.' };
+
+  const hourly = buildHourly(a1, a2);
+  if (hourly.length < 2)
+    return { error: 'No overlapping timestamps. Confirm both CSVs cover the same period.' };
+
+  // ── Config ──────────────────────────────────────────────────────────────────
+  const bandPct    = clamp(+(config.bandPct          ?? 20.0), 0.5, 99) / 100;
+  const buyBrok    = clamp(+(config.buyBrokeragePct  ?? 0.15), 0, 5)   / 100;
+  const sellBrok   = clamp(+(config.sellBrokeragePct ?? 0.15), 0, 5)   / 100;
+
+  const ilStopPct   = clamp(+(config.ilStopLossPct ?? 0), 0, 100);
+  const ilResumePct = clamp(+(config.ilResumePct   ?? 0), 0, 100);
+
+  const alphaProtectThresh = clamp(+(config.alphaProtectThresholdPct ?? 0.3), 0, 100);
+  const alphaProtectOn     = config.alphaProtectEnabled !== false;
+
+  // Reinvestment config
+  const reinvestEnabled = config.reinvestEnabled !== false;
+  const reinvestBrokPct = clamp(+(config.reinvestBrokeragePct ?? config.buyBrokeragePct ?? 0.15), 0, 5) / 100;
+
+  // ── Initialise pool ──────────────────────────────────────────────────────────
+  const h0    = hourly[0];
+  const p1_0  = h0.c1, p2_0 = h0.c2;
+  let rCenter = p1_0 / p2_0;
+  let rLow    = rCenter * (1 - bandPct);
+  let rHigh   = rCenter * (1 + bandPct);
+
+  let L = computeL(realCapital, p1_0, p2_0, rCenter, rLow, rHigh);
+  if (L <= 0) return { error: 'Band width too small or capital too low — L is zero.' };
+
+  const res0 = v3Reserves(L, rCenter, rLow, rHigh);
+  let xShares = Math.max(1, Math.round(res0.x));
+  let yShares = Math.max(1, Math.round(res0.y));
+
+  // Fixed initial reference (never changes — used for initial capital display)
+  const xInit0     = xShares;
+  const yInit0     = yShares;
+  const initCapital = xInit0 * p1_0 + yInit0 * p2_0;
+  const LInitial   = L;
+
+  // Mutable hold benchmark — grows when reinvested shares are purchased
+  // Invariant: xShares - xHold reflects only AMM-induced drift, never reinvestment
+  let xHold = xShares;
+  let yHold = yShares;
+
+  // ── State ────────────────────────────────────────────────────────────────────
+  let rPrev          = rCenter;
+  let cashProfit     = 0;
+  let totalBrokerage = 0;
+  let grossSwapFees  = 0;
+  let totalSwaps     = 0;
+  let successSwaps   = 0;
+  let recenterCount  = 0;
+
+  let swapsHalted    = false;
+  let haltReason     = null;
+  let ilHaltedAt     = null;
+  let ilResumedAt    = null;
+  let haltCount      = 0;
+  let alphaProtected = false;
+
+  // Reinvestment state
+  const reinvestRecords  = [];
+  let reinvestCount      = 0;
+  let totalReinvestedRaw = 0;   // gross capital deployed via reinvestment
+  let totalReinvestBrok  = 0;   // brokerage paid on reinvestment
+  let totalCapDeployed   = initCapital;
+
+  const swapRecords = [];
+  const equityCurve = [];
+
+  equityCurve.push({
+    date: h0.date.toISOString(),
+    poolValue: initCapital, holdValue: initCapital,
+    cashProfit: 0, alphaINR: 0, ilPct: 0,
+    rCenter, rLow, rHigh, L, LInitial,
+    halted: false, haltReason: null, reinvested: false,
+  });
+
+  // ── Hour loop ─────────────────────────────────────────────────────────────────
+  for (let idx = 1; idx < hourly.length; idx++) {
+    const row = hourly[idx];
+    const p1  = row.c1, p2 = row.c2;
+    const rNew = p1 / p2;
+
+    // ── Portfolio values for guard checks ────────────────────────────────────
+    const pvNow      = xShares * p1 + yShares * p2;
+    const hvNow      = xHold   * p1 + yHold   * p2;
+    const ilPctNow   = hvNow > 0 ? (pvNow / hvNow - 1) * 100 : 0;
+    // cashRoi uses initCapital so alpha-protection threshold is stable
+    const cashRoiNow = initCapital > 0 ? cashProfit / initCapital * 100 : 0;
+
+    // ── AUTO-RESUME ──────────────────────────────────────────────────────────
+    if (swapsHalted) {
+      if (haltReason === 'IL_STOP' && ilResumePct > 0 && ilPctNow >= -ilResumePct) {
+        swapsHalted = false; haltReason = null; ilResumedAt = row.date.toISOString();
+      } else if (haltReason === 'ALPHA_PROTECT' && cashRoiNow > 0 && Math.abs(ilPctNow) < cashRoiNow) {
+        swapsHalted = false; haltReason = null; ilResumedAt = row.date.toISOString();
+      }
+    }
+
+    // ── HALT CHECKS ──────────────────────────────────────────────────────────
+    if (!swapsHalted) {
+      if (ilStopPct > 0 && ilPctNow < -ilStopPct) {
+        swapsHalted = true; haltReason = 'IL_STOP';
+        ilHaltedAt  = row.date.toISOString(); haltCount++;
+      }
+      if (!swapsHalted && alphaProtectOn
+          && cashRoiNow >= alphaProtectThresh
+          && ilPctNow < 0
+          && Math.abs(ilPctNow) >= cashRoiNow) {
+        swapsHalted    = true; haltReason = 'ALPHA_PROTECT';
+        alphaProtected = true;
+        ilHaltedAt     = row.date.toISOString(); haltCount++;
+      }
+    }
+
+    // ── OUT OF RANGE → RECENTER ───────────────────────────────────────────────
+    let didRecenter = false;
+    if (rNew < rLow || rNew > rHigh) {
+      const capNow = xShares * p1 + yShares * p2;
+      rCenter = rNew;
+      rLow    = rCenter * (1 - bandPct);
+      rHigh   = rCenter * (1 + bandPct);
+      L       = computeL(capNow, p1, p2, rCenter, rLow, rHigh);
+      if (L > 0) {
+        const resNew = v3Reserves(L, rCenter, rLow, rHigh);
+        xShares = Math.max(1, Math.round(resNew.x));
+        yShares = Math.max(1, Math.round(resNew.y));
+      }
+      rPrev = rCenter;
+      recenterCount++;
+      didRecenter = true;
+    }
+
+    // ── IN RANGE → V3 SWAP ───────────────────────────────────────────────────
+    if (!didRecenter && !swapsHalted) {
+      const { dx, dy } = v3SwapDelta(L, rPrev, rNew);
+      const absDx = Math.abs(dx);
+      const absDy = Math.abs(dy);
+      const dxInt = absDx >= 0.5 ? Math.round(absDx) : 0;
+      const dyInt = absDy >= 0.5 ? Math.round(absDy) : 0;
+
+      if (dxInt >= 1 && dyInt >= 1) {
+        if (dx < 0) {
+          // Ratio ROSE: pool releases Asset1, absorbs Asset2
+          // NSE: BUY dyInt Asset2, SELL dxInt Asset1
+          const sellQty = Math.min(dxInt, xShares - 1);
+          if (sellQty >= 1) {
+            const cost    = dyInt   * p2;
+            const revenue = sellQty * p1;
+            const brok    = buyBrok * cost + sellBrok * revenue;
+            const gross   = revenue - cost;
+            const net     = gross - brok;
+            if (net > 0) {
+              xShares -= sellQty;
+              yShares += dyInt;
+              cashProfit     += net;
+              totalBrokerage += brok;
+              grossSwapFees  += gross;
+              totalSwaps++; successSwaps++;
+
+              const pvS = xShares * p1 + yShares * p2;
+              const hvS = xHold   * p1 + yHold   * p2;
+              swapRecords.push({
+                type: 'swap',
+                date: row.date.toISOString(),
+                action: 'Buy Asset 2 / Sell Asset 1',
+                buyAsset: 'Asset 2', buyQty: dyInt,   cost,
+                sellAsset:'Asset 1', sellQty,          revenue,
+                gross, brok, net, cashProfit,
+                asset1Price: p1, asset2Price: p2,
+                poolX: xShares, poolY: yShares,
+                ilPct: hvS > 0 ? (pvS/hvS-1)*100 : 0,
+                totalValue: pvS + cashProfit,
+                haltReason, rLow, rHigh, rCenter, L, dx, dy,
+              });
+            }
+          }
+        } else if (dx > 0) {
+          // Ratio FELL: pool releases Asset2, absorbs Asset1
+          // NSE: BUY dxInt Asset1, SELL dyInt Asset2
+          const sellQty = Math.min(dyInt, yShares - 1);
+          if (sellQty >= 1) {
+            const cost    = dxInt   * p1;
+            const revenue = sellQty * p2;
+            const brok    = buyBrok * cost + sellBrok * revenue;
+            const gross   = revenue - cost;
+            const net     = gross - brok;
+            if (net > 0) {
+              xShares += dxInt;
+              yShares -= sellQty;
+              cashProfit     += net;
+              totalBrokerage += brok;
+              grossSwapFees  += gross;
+              totalSwaps++; successSwaps++;
+
+              const pvS = xShares * p1 + yShares * p2;
+              const hvS = xHold   * p1 + yHold   * p2;
+              swapRecords.push({
+                type: 'swap',
+                date: row.date.toISOString(),
+                action: 'Buy Asset 1 / Sell Asset 2',
+                buyAsset: 'Asset 1', buyQty: dxInt,   cost,
+                sellAsset:'Asset 2', sellQty,          revenue,
+                gross, brok, net, cashProfit,
+                asset1Price: p1, asset2Price: p2,
+                poolX: xShares, poolY: yShares,
+                ilPct: hvS > 0 ? (pvS/hvS-1)*100 : 0,
+                totalValue: pvS + cashProfit,
+                haltReason, rLow, rHigh, rCenter, L, dx, dy,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    if (!didRecenter) rPrev = rNew;
+
+    // ── ALPHA REINVESTMENT ────────────────────────────────────────────────────
+    //
+    // Lot = 1 share Asset1 + round(yShares/xShares) shares Asset2
+    // This mirrors the current V3 pool composition ratio.
+    //
+    // We buy N = floor(cashProfit / lotCost) lots so that ALL available
+    // alpha is deployed in one atomic step, minimising idle cash.
+    //
+    // Both xHold and yHold expand by the same addX/addY, preserving the
+    // IL accounting invariant at the instant of reinvestment.
+    // ──────────────────────────────────────────────────────────────────────────
+    let didReinvest = false;
+    if (reinvestEnabled && cashProfit > 0 && xShares > 0 && yShares > 0) {
+      // Current-ratio lot (minimum 1:1 floor on Asset2 side)
+      const lotX    = 1;
+      const lotY    = Math.max(1, Math.round(yShares / xShares));
+      const lotRaw  = lotX * p1 + lotY * p2;
+      const lotBrok = reinvestBrokPct * lotRaw;
+      const lotCost = lotRaw + lotBrok;           // total cost per lot inc. brok
+
+      if (lotCost > 1e-6 && cashProfit >= lotCost) {
+        const nLots   = Math.floor(cashProfit / lotCost);
+        const addX    = nLots * lotX;             // integer Asset1 shares to add
+        const addY    = nLots * lotY;             // integer Asset2 shares to add
+        const rawCost = addX * p1 + addY * p2;   // market value of new shares
+        const brok    = reinvestBrokPct * rawCost;
+        const spent   = rawCost + brok;
+
+        // Final guard: ensure we have enough cash (floating-point safety)
+        if (spent > 0 && cashProfit >= spent && addX >= 1 && addY >= 1) {
+
+          // 1) Add shares to live pool
+          xShares += addX;
+          yShares += addY;
+
+          // 2) Expand hold benchmark by the same amounts so that IL at this
+          //    instant is unchanged (symmetric delta: new shares cancel in IL
+          //    numerator and denominator). Future swap drift will again
+          //    diverge xShares from xHold, generating meaningful IL signal.
+          xHold += addX;
+          yHold += addY;
+
+          // 3) Cash accounting
+          cashProfit         -= spent;
+          totalBrokerage     += brok;
+          totalReinvestBrok  += brok;
+          totalReinvestedRaw += rawCost;
+          totalCapDeployed   += rawCost;
+          reinvestCount++;
+          didReinvest = true;
+
+          // 4) Recompute L from new pool capital
+          //    Clamp rCur to [rLow, rHigh] to handle edge timing
+          const rCur    = clamp(rNew, rLow, rHigh);
+          const capAfter = xShares * p1 + yShares * p2;
+          L = computeL(capAfter, p1, p2, rCur, rLow, rHigh);
+
+          reinvestRecords.push({
+            type: 'reinvest',
+            date:  row.date.toISOString(),
+            lotX, lotY, nLots,
+            addX,  addY,
+            rawCost, brok, spent,
+            cashProfitAfter: cashProfit,
+            xShares, yShares,
+            xHold, yHold,
+            L,
+            asset1Price: p1,
+            asset2Price: p2,
+            rCenter, rLow, rHigh,
+            poolValue:   xShares * p1 + yShares * p2,
+            reinvestCount,
+            totalReinvestedRaw,
+            LGrowthFactor: LInitial > 0 ? L / LInitial : 1,
+          });
+        }
+      }
+    }
+
+    // ── Equity snapshot ───────────────────────────────────────────────────────
+    const pv = xShares * p1 + yShares * p2;
+    const hv = xHold   * p1 + yHold   * p2;
+    equityCurve.push({
+      date: row.date.toISOString(),
+      poolValue:  pv + cashProfit,
+      holdValue:  hv,
+      cashProfit,
+      alphaINR:   pv + cashProfit - hv,
+      ilPct:      hv > 0 ? (pv/hv-1)*100 : 0,
+      rCenter, rLow, rHigh, L, LInitial,
+      halted:     swapsHalted,
+      haltReason,
+      reinvested: didReinvest,
+    });
+  }
+
+  // ── Final results ─────────────────────────────────────────────────────────────
+  const last       = hourly[hourly.length - 1];
+  const holdValue  = xHold   * last.c1 + yHold   * last.c2;
+  const poolAssets = xShares * last.c1 + yShares * last.c2;
+  const totalValue = poolAssets + cashProfit;
+  const ilINR      = poolAssets - holdValue;
+  const ilPct      = holdValue > 0 ? (poolAssets / holdValue - 1) * 100 : 0;
+  const vsHold     = totalValue - holdValue;
+  const vsHoldPct  = holdValue  > 0 ? (totalValue / holdValue - 1) * 100 : 0;
+  const concentrationFactor = rLow > 0 ? 1 / (1 - Math.sqrt(rLow / rHigh)) : 1;
+
+  // Total swap income ever generated (before spending on reinvestment)
+  const totalSwapIncome = cashProfit + totalReinvestedRaw + totalReinvestBrok;
+
+  const results = {
+    realCapital, initCapital, totalCapDeployed,
+    totalValue, poolAssets, holdValue,
+    cashProfit, totalBrokerage, grossSwapFees,
+    totalSwapIncome,
+    totalSwapRoi: initCapital > 0 ? totalSwapIncome / initCapital * 100 : 0,
+    vsHold, vsHoldPct,
+    roiPct:   initCapital > 0 ? (totalValue  / initCapital - 1) * 100 : 0,
+    holdRoi:  totalCapDeployed > 0 ? (holdValue   / totalCapDeployed - 1) * 100 : 0,
+    cashRoi:  initCapital > 0 ?  cashProfit  / initCapital * 100 : 0,
+    brokRoi:  initCapital > 0 ?  totalBrokerage / initCapital * 100 : 0,
+    ilINR, ilPct,
+    swapsHalted, haltReason, ilHaltedAt, ilResumedAt,
+    haltCount, alphaProtected,
+    totalSwaps, successSwaps, recenterCount,
+    successRate: totalSwaps > 0 ? successSwaps / totalSwaps : 0,
+    initialX: xInit0, initialY: yInit0,
+    finalX: xShares, finalY: yShares,
+    xHold, yHold,
+    bandPct: bandPct * 100, concentrationFactor,
+    rCenter, rLow, rHigh, L, LInitial,
+    LGrowthFactor: LInitial > 0 ? L / LInitial : 1,
+    buyBrokeragePct:  buyBrok  * 100,
+    sellBrokeragePct: sellBrok * 100,
+    // Reinvestment
+    reinvestEnabled,
+    reinvestCount,
+    totalReinvestedRaw,
+    totalReinvestBrok,
+  };
+
+  const performanceSummary = buildPerformanceSummary(swapRecords, equityCurve, results);
+  return { swaps: swapRecords, equityCurve, results, performanceSummary, reinvests: reinvestRecords };
+}
+
+
+/* ─── app.js ─────────────────────────────────────────────────────────────── */
+
+const state = { swaps: [], results: null, equity: [], perf: null, reinvests: [] };
+const $     = id => document.getElementById(id);
+const inr   = v => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(v);
+const inr2  = v => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',minimumFractionDigits:2,maximumFractionDigits:2}).format(v);
+const pct   = (v,d=2) => `${v>=0?'+':''}${(+v).toFixed(d)}%`;
+const dec   = (v,d=2) => (+v).toFixed(d);
+const qty   = v => Math.round(+v).toLocaleString('en-IN');
+
+// ── DOM refs ──────────────────────────────────────────────────────────────────
+const asset1File  = $('asset1File'),    asset2File  = $('asset2File');
+const asset1Name  = $('asset1FileName'),asset2Name  = $('asset2FileName');
+const asset1Label = $('asset1Label'),   asset2Label = $('asset2Label');
+const runBtn      = $('runSimulation');
+const statusBanner= $('statusBanner'),  haltBanner  = $('haltBanner');
+const metricsGrid = $('metricsGrid'),   perfPanel   = $('perfPanel');
+const chartCanvas = $('equityChart'),   alphaCanvas = $('alphaChart');
+const lGrowthCanvas = $('lGrowthChart');
+const tableWrap   = $('tableWrap'),     swapCount   = $('swapCount');
+const dlBtn       = $('downloadCsv'),   pairHeading = $('pairHeading');
+const bandLabel   = $('bandLabel');
+
+asset1File.addEventListener('change',()=>{ asset1Name.textContent=asset1File.files[0]?.name||'Upload Asset 1 CSV'; });
+asset2File.addEventListener('change',()=>{ asset2Name.textContent=asset2File.files[0]?.name||'Upload Asset 2 CSV'; });
+asset1Label.addEventListener('input',updateHeading);
+asset2Label.addEventListener('input',updateHeading);
+dlBtn.addEventListener('click',()=>downloadCsv(state.swaps, state.reinvests));
+runBtn.addEventListener('click',handleRun);
+$('bandPct')?.addEventListener('input', updateBandLabel);
+updateHeading(); updateBandLabel();
+
+function updateHeading(){
+  pairHeading.textContent=`${asset1Label.value||'Asset 1'}  ↔  ${asset2Label.value||'Asset 2'}`;
+}
+function updateBandLabel(){
+  const b = +($('bandPct')?.value||20);
+  if (!bandLabel) return;
+  const cf = 1/(1-Math.sqrt((1-b/100)/(1+b/100)));
+  bandLabel.textContent = `±${b}% range  ·  ${cf.toFixed(1)}× concentration vs full-range`;
+}
+function setStatus(type,msg){
+  statusBanner.className=`status-banner status-${type}`;
+  statusBanner.innerHTML=`<strong>${type.toUpperCase()}:</strong> <span>${msg}</span>`;
+}
+function getConfig(){
+  return {
+    bandPct:                  +$('bandPct').value,
+    buyBrokeragePct:          +$('buyBrokeragePct').value,
+    sellBrokeragePct:         +$('sellBrokeragePct').value,
+    ilStopLossPct:            +$('ilStopLossPct').value,
+    ilResumePct:              +$('ilResumePct').value,
+    alphaProtectEnabled:       $('alphaProtectEnabled').checked,
+    alphaProtectThresholdPct: +$('alphaProtectThresholdPct').value,
+    reinvestEnabled:           $('reinvestEnabled').checked,
+    reinvestBrokeragePct:     +$('reinvestBrokeragePct').value,
+  };
+}
+
+// ── Run ───────────────────────────────────────────────────────────────────────
+async function handleRun(){
+  if (!asset1File.files[0]||!asset2File.files[0]){
+    setStatus('error','Upload both CSV files before running.');return;
+  }
+  runBtn.disabled=true; runBtn.textContent='Running…';
+  haltBanner.classList.add('hidden');
+  setStatus('info','Computing V3 liquidity parameter L and running hourly swap + reinvestment simulation…');
+  try {
+    await new Promise(r=>setTimeout(r,10));
+    const [t1,t2]=await Promise.all([asset1File.files[0].text(),asset2File.files[0].text()]);
+    const result=runAlmSimulation(parseCsv(t1),parseCsv(t2),+$('realCapital').value,getConfig());
+    if (result.error){
+      setStatus('error',result.error); resetPanels();
+    } else {
+      state.swaps    = result.swaps;
+      state.results  = result.results;
+      state.equity   = result.equityCurve;
+      state.perf     = result.performanceSummary;
+      state.reinvests= result.reinvests ?? [];
+      renderMetrics(); renderPerf(); renderCharts(); renderTable(); renderHaltBanner();
+      const r=result.results;
+      const reinvestNote = r.reinvestCount > 0
+        ? `  ·  🔄 ${r.reinvestCount} reinvests · L×${dec(r.LGrowthFactor,2)}`
+        : '';
+      setStatus(r.vsHold>=0?'success':'warning',
+        `${r.vsHold>=0?'Pool beats hold':'Pool behind hold'} by ${inr(Math.abs(r.vsHold))} (${dec(r.vsHoldPct,3)}%)  ·  `+
+        `Cash: ${inr(r.cashProfit)}  ·  IL: ${dec(r.ilPct,3)}%  ·  `+
+        `Swaps: ${r.totalSwaps}  ·  L=${dec(r.L,0)}  ·  ${dec(r.concentrationFactor,1)}× concentration`+reinvestNote);
+    }
+  } catch(e){setStatus('error',e.message||'Error.');resetPanels();}
+  runBtn.disabled=false; runBtn.textContent='▶ Run Simulation';
+}
+
+function resetPanels(){
+  state.swaps=[];state.results=null;state.equity=[];state.perf=null;state.reinvests=[];
+  renderMetrics();renderPerf();renderTable();
+}
+
+// ── Halt banner ───────────────────────────────────────────────────────────────
+function renderHaltBanner(){
+  const r=state.results; haltBanner.classList.add('hidden');
+  if (!r) return;
+  const lines=[];
+  if (r.swapsHalted){
+    if (r.haltReason==='IL_STOP'){
+      lines.push(`<strong>⛔ IL Stop-Loss Active</strong>`);
+      lines.push(`Halted at ${new Date(r.ilHaltedAt).toLocaleString('en-IN')} — IL exceeded −${dec($('ilStopLossPct').value,1)}%. Resumes when IL recovers above −${dec($('ilResumePct').value,1)}%.`);
+    } else if (r.haltReason==='ALPHA_PROTECT'){
+      lines.push(`<strong>🛡️ Alpha-Protection Active</strong>`);
+      lines.push(`Paused — IL has reached the accumulated cash alpha level. Net-zero preserved. Resumes when IL retreats below cash ROI.`);
+    }
+    haltBanner.className='halt-banner halted';
+  } else if (r.ilResumedAt){
+    lines.push(`<strong>✅ Swaps Resumed</strong>`);
+    lines.push(`Last resumed: ${new Date(r.ilResumedAt).toLocaleString('en-IN')}.${r.haltCount>1?` (${r.haltCount} cycles)`:''}`);
+    haltBanner.className='halt-banner resumed';
+  } else if (r.alphaProtected){
+    lines.push(`<strong>🛡️ Alpha-Protection fired ${r.haltCount}× — net-alpha preserved.</strong>`);
+    haltBanner.className='halt-banner protect';
+  }
+  if (!lines.length) return;
+  haltBanner.innerHTML=`<span class="hb-icon">${r.swapsHalted?(r.haltReason==='ALPHA_PROTECT'?'🛡️':'⛔'):'✅'}</span><div class="hb-lines">${lines.map(l=>`<span>${l}</span>`).join('')}</div>`;
+  haltBanner.classList.remove('hidden');
+}
+
+// ── Metrics ───────────────────────────────────────────────────────────────────
+function renderMetrics(){
+  if (!state.results){
+    metricsGrid.innerHTML='<div class="empty-state"><p>Upload CSV files and run the simulation.</p></div>';
+    dlBtn.classList.add('hidden');return;
+  }
+  const r=state.results;
+  const a1=asset1Label.value||'Asset 1', a2=asset2Label.value||'Asset 2';
+
+  const cards=[
+    {label:'Pool vs Buy-and-Hold',      value:inr(r.vsHold),                     delta:pct(r.vsHoldPct,3),    pos:r.vsHold>=0,      hl:true},
+    {label:'Total AMM Value',           value:inr(r.totalValue),                  delta:pct(r.roiPct),          pos:r.roiPct>=0},
+    {label:'Buy-and-Hold Value',        value:inr(r.holdValue),                   delta:pct(r.holdRoi),         pos:r.holdRoi>=0},
+    {label:'Cash Remaining (swaps)',    value:inr(r.cashProfit),                  delta:pct(r.cashRoi,3),       pos:r.cashProfit>=0},
+    {label:'Total Alpha Generated',     value:inr(r.totalSwapIncome),             delta:pct(r.totalSwapRoi,3),  pos:r.totalSwapIncome>=0},
+    {label:'Gross Swap Fees',           value:inr(r.grossSwapFees),               delta:null},
+    {label:'Pool Asset Value',          value:inr(r.poolAssets),                  delta:null},
+    {label:'Unrealized IL',             value:inr(r.ilINR),                       delta:pct(r.ilPct,3),         pos:r.ilPct>=0},
+    {label:'Total Brokerage Paid',      value:inr(r.totalBrokerage),              delta:pct(-r.brokRoi,3),      pos:false},
+    // ── V3 Liquidity ─────────────────────────────────────────────────────────
+    {label:'Liquidity Parameter L (initial)', value:dec(r.LInitial,2),            delta:null,                   hl:false},
+    {label:'Liquidity Parameter L (final)',   value:dec(r.L,2),                   delta:null,                   hl:true},
+    {label:'L Growth Factor',                 value:`${dec(r.LGrowthFactor,3)}×`, delta:null,                   pos:r.LGrowthFactor>1},
+    {label:'Concentration Factor',            value:`${dec(r.concentrationFactor,1)}×`, delta:null},
+    {label:'Band Width (±)',                  value:`±${dec(r.bandPct,0)}%`,       delta:null},
+    // ── Reinvestment ─────────────────────────────────────────────────────────
+    {label:'🔄 Reinvestment Events',          value:r.reinvestCount.toLocaleString('en-IN'),    delta:null, hl: r.reinvestCount>0},
+    {label:'Capital Reinvested',              value:inr(r.totalReinvestedRaw),     delta:null,                   pos:true},
+    {label:'Total Capital Deployed',          value:inr(r.totalCapDeployed),       delta:null},
+    {label:'Reinvest Brokerage Paid',         value:inr(r.totalReinvestBrok),      delta:null,                   pos:false},
+    // ── Swap quality ──────────────────────────────────────────────────────────
+    {label:'Profitable Swaps',          value:`${r.successSwaps} / ${r.totalSwaps}`, delta:null},
+    {label:'Swap Success Rate',         value:`${dec(r.successRate*100,1)}%`,      delta:null},
+    {label:'Recenter Events',           value:r.recenterCount.toLocaleString('en-IN'), delta:null},
+    {label:'Halt / Resume Cycles',      value:r.haltCount>0?`${r.haltCount}×`:'0',delta:null},
+    {label:'Alpha-Protection Fired',    value:r.alphaProtected?'🛡️ Yes':'—',       delta:null},
+    // ── Share counts ─────────────────────────────────────────────────────────
+    {label:`Initial ${a1} shares`,      value:qty(r.initialX),delta:null},
+    {label:`Final ${a1} shares`,        value:qty(r.finalX),  delta:null},
+    {label:`Hold bench ${a1}`,          value:qty(r.xHold),   delta:null},
+    {label:`Initial ${a2} shares`,      value:qty(r.initialY),delta:null},
+    {label:`Final ${a2} shares`,        value:qty(r.finalY),  delta:null},
+    {label:`Hold bench ${a2}`,          value:qty(r.yHold),   delta:null},
+  ];
+  metricsGrid.innerHTML=cards.map(({label,value,delta,pos,hl})=>`
+    <div class="metric-card${hl?' hl':''}">
+      <span class="mc-label">${label}</span>
+      <strong class="mc-value">${value}</strong>
+      ${delta!=null?`<em class="mc-delta ${pos?'pos':'neg'}">${delta}</em>`:''}
+    </div>`).join('');
+  dlBtn.classList.remove('hidden');
+}
+
+// ── Performance panel ─────────────────────────────────────────────────────────
+function renderPerf(){
+  if (!state.perf){perfPanel.innerHTML='<div class="empty-state"><p>Run simulation first.</p></div>';return;}
+  const p=state.perf;
+  perfPanel.innerHTML=`
+    <div class="perf-grid">
+      <div class="perf-box">
+        <h3>💰 Harvest vs Friction</h3>
+        <div class="pr"><span>Gross Swap Fees</span><strong class="pos">${inr(p.grossFees)}</strong></div>
+        <div class="pr"><span>Total Brokerage</span><strong class="neg">${inr(p.totalFriction)}</strong></div>
+        <div class="pr"><span>Net Cash Income</span><strong>${inr(p.netSwapIncome)}</strong></div>
+        <div class="pr"><span>Friction Ratio</span><strong>${dec(p.frictionRatioPct,1)}%</strong></div>
+        <div class="pbadge ${p.frictionRatio<0.10?'good':p.frictionRatio<0.25?'ok':'bad'}">${p.narrative.friction}</div>
+      </div>
+      <div class="perf-box">
+        <h3>📈 Risk-Adjusted Return</h3>
+        <div class="pr"><span>Alpha Sharpe (ann.)</span><strong>${dec(p.alphaSharpe,3)}</strong></div>
+        <div class="pr"><span>Max Alpha Drawdown ₹</span><strong class="neg">${inr(p.maxDrawdownINR)}</strong></div>
+        <div class="pr"><span>Max Drawdown %</span><strong class="neg">${dec(p.maxDrawdownPct,3)}%</strong></div>
+        <div class="pr"><span>Final Net Alpha</span><strong class="${p.netAlphaFinal>=0?'pos':'neg'}">${inr(p.netAlphaFinal)}</strong></div>
+      </div>
+      <div class="perf-box">
+        <h3>✅ Swap Quality</h3>
+        <div class="pr"><span>Total Swaps</span><strong>${p.totalSwaps}</strong></div>
+        <div class="pr"><span>Profitable Swaps</span><strong class="pos">${p.successfulSwaps}</strong></div>
+        <div class="pr"><span>Success Rate</span><strong>${dec(p.successRatePct,1)}%</strong></div>
+        <div class="pbadge ${p.successRate>=1?'good':p.successRate>0.8?'ok':'bad'}">${p.narrative.swapQuality}</div>
+      </div>
+      <div class="perf-box">
+        <h3>🔬 V3 Concentration</h3>
+        <div class="pr"><span>Amplification</span><strong class="pos">${dec(p.concentrationFactor,1)}×</strong></div>
+        <div class="pr"><span>IL Status</span><strong class="${p.unrealizedIL>=0?'pos':'neg'}">${inr(p.unrealizedIL)}</strong></div>
+        <div class="pr"><span>Net Alpha</span><strong class="${p.netAlphaFinal>=0?'pos':'neg'}">${inr(p.netAlphaFinal)}</strong></div>
+        <div class="pbadge ok">${p.narrative.concentration}</div>
+      </div>
+      <div class="perf-box perf-box-reinvest">
+        <h3>🔄 Alpha Reinvestment</h3>
+        <div class="pr"><span>Reinvestment Events</span><strong class="${p.reinvestCount>0?'pos':''}">${p.reinvestCount}</strong></div>
+        <div class="pr"><span>Capital Reinvested</span><strong class="pos">${inr(p.totalReinvestedRaw)}</strong></div>
+        <div class="pr"><span>Reinvest Brokerage</span><strong class="neg">${inr(p.totalReinvestBrok)}</strong></div>
+        <div class="pr"><span>L Initial → Final</span><strong>${dec(p.LInitial,1)} → ${dec(p.LFinal,1)}</strong></div>
+        <div class="pr"><span>L Growth Factor</span><strong class="${p.LGrowthFactor>=1?'pos':'neg'}">${dec(p.LGrowthFactor,3)}×</strong></div>
+        <div class="pbadge ${p.reinvestCount>0?'good':'ok'}">${p.narrative.reinvest}</div>
+      </div>
+    </div>`;
+}
+
+// ── Charts ────────────────────────────────────────────────────────────────────
+function renderCharts(){
+  if (!state.equity.length) return;
+  const step=Math.max(1,Math.floor(state.equity.length/600));
+  const s=state.equity.filter((_,i)=>i%step===0);
+
+  const reinvestDates = new Set(state.reinvests.map(r=>r.date.substring(0,13)));
+
+  drawChart(chartCanvas,s,[
+    {key:'poolValue', label:'AMM Total Value', color:'#38bdf8'},
+    {key:'holdValue', label:'Buy-and-Hold',    color:'#818cf8'},
+    {key:'cashProfit',label:'Cash Profit',     color:'#22c55e'},
+  ],'₹ Value', reinvestDates);
+
+  drawChart(alphaCanvas,s,[
+    {key:'alphaINR',label:'Net Alpha ₹',   color:'#facc15'},
+    {key:'ilPct',   label:'IL% (×1000)',   color:'#f43f5e', scale:1000},
+  ],'Alpha / IL', reinvestDates);
+
+  // L-growth chart
+  drawChart(lGrowthCanvas,s,[
+    {key:'L', label:'Liquidity Parameter L', color:'#a78bfa'},
+  ],'L (liquidity)', reinvestDates);
+}
+
+function drawChart(canvas, data, series, yLabel, reinvestDateSet){
+  if (!canvas||!data.length) return;
+  const dpr=window.devicePixelRatio||1, rect=canvas.getBoundingClientRect();
+  canvas.width=rect.width*dpr; canvas.height=rect.height*dpr;
+  const ctx=canvas.getContext('2d'); ctx.scale(dpr,dpr);
+  const W=rect.width,H=rect.height,P={t:24,r:14,b:40,l:86};
+  const cW=W-P.l-P.r, cH=H-P.t-P.b;
+  ctx.clearRect(0,0,W,H);
+
+  let yMin=Infinity, yMax=-Infinity;
+  for(const s of series){
+    const sc=s.scale??1;
+    for(const d of data){ const v=(d[s.key]??0)*sc; if(v<yMin)yMin=v; if(v>yMax)yMax=v; }
+  }
+  if(!isFinite(yMin))yMin=0; if(!isFinite(yMax))yMax=1;
+  if(yMin===yMax){yMin-=1;yMax+=1;}
+  const yRng=yMax-yMin;
+
+  const toX=i=>P.l+(i/(data.length-1||1))*cW;
+  const toY=v=>P.t+cH-((v-yMin)/yRng)*cH;
+
+  // Zero line
+  if(yMin<0&&yMax>0){
+    const yp=toY(0);
+    ctx.strokeStyle='rgba(148,163,184,.22)'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.moveTo(P.l,yp); ctx.lineTo(P.l+cW,yp); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Grid
+  for(let g=0;g<=4;g++){
+    const yv=yMin+(g/4)*yRng, yp=toY(yv);
+    ctx.strokeStyle='rgba(148,163,184,.07)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(P.l,yp); ctx.lineTo(P.l+cW,yp); ctx.stroke();
+    ctx.fillStyle='rgba(148,163,184,.6)'; ctx.font='9px Arial'; ctx.textAlign='right';
+    const lbl=Math.abs(yRng)>50000?`₹${(yv/1e5).toFixed(1)}L`:Math.abs(yRng)>999?`₹${(yv/1e3).toFixed(1)}K`:yv.toFixed(1);
+    ctx.fillText(lbl,P.l-3,yp+3);
+  }
+
+  // X axis labels
+  for(let i=0;i<=4;i++){
+    const idx=Math.round((i/4)*(data.length-1));
+    ctx.fillStyle='rgba(148,163,184,.6)'; ctx.font='9px Arial'; ctx.textAlign='center';
+    ctx.fillText(new Date(data[idx].date).toLocaleDateString('en-IN',{month:'short',day:'numeric'}),toX(idx),H-P.b+12);
+  }
+
+  // Y label
+  ctx.save(); ctx.translate(11,P.t+cH/2); ctx.rotate(-Math.PI/2);
+  ctx.fillStyle='rgba(148,163,184,.6)'; ctx.font='9px Arial'; ctx.textAlign='center';
+  ctx.fillText(yLabel,0,0); ctx.restore();
+
+  // Halt shading (red)
+  let inH=false,hS=0;
+  for(let i=0;i<data.length;i++){
+    if(data[i].halted&&!inH){inH=true;hS=i;}
+    if(!data[i].halted&&inH){ctx.fillStyle='rgba(244,63,94,.07)';ctx.fillRect(toX(hS),P.t,toX(i)-toX(hS),cH);inH=false;}
+  }
+  if(inH){ctx.fillStyle='rgba(244,63,94,.07)';ctx.fillRect(toX(hS),P.t,toX(data.length-1)-toX(hS),cH);}
+
+  // Swap markers (yellow, thin)
+  const swapSet=new Set(state.swaps.map(s=>s.date.substring(0,13)));
+  data.forEach((d,i)=>{
+    if(swapSet.has(d.date.substring(0,13))){
+      ctx.fillStyle='rgba(250,204,21,.30)';
+      ctx.fillRect(toX(i)-.5,P.t,1,cH);
+    }
+  });
+
+  // Reinvest markers (green, slightly wider)
+  if(reinvestDateSet&&reinvestDateSet.size>0){
+    data.forEach((d,i)=>{
+      if(reinvestDateSet.has(d.date.substring(0,13))){
+        ctx.fillStyle='rgba(34,197,94,.60)';
+        ctx.fillRect(toX(i)-1.5,P.t,3,cH);
+      }
+    });
+  }
+
+  // Series lines
+  for(const s of series){
+    const sc=s.scale??1;
+    ctx.beginPath(); ctx.strokeStyle=s.color; ctx.lineWidth=1.5; ctx.lineJoin='round';
+    data.forEach((d,i)=>{
+      const x=toX(i), y=toY((d[s.key]??0)*sc);
+      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+  }
+
+  // Legend
+  let lx=P.l;
+  for(const s of series){
+    ctx.fillStyle=s.color; ctx.fillRect(lx,7,12,3);
+    ctx.fillStyle='rgba(148,163,184,.85)'; ctx.font='9px Arial'; ctx.textAlign='left';
+    ctx.fillText(s.label,lx+15,12);
+    lx+=ctx.measureText(s.label).width+30;
+  }
+  // Legend key for markers
+  ctx.fillStyle='rgba(250,204,21,.50)'; ctx.fillRect(lx,7,6,8);
+  ctx.fillStyle='rgba(148,163,184,.85)'; ctx.font='9px Arial'; ctx.fillText('swap',lx+9,12); lx+=50;
+  if(reinvestDateSet&&reinvestDateSet.size>0){
+    ctx.fillStyle='rgba(34,197,94,.60)'; ctx.fillRect(lx,7,6,8);
+    ctx.fillStyle='rgba(148,163,184,.85)'; ctx.font='9px Arial'; ctx.fillText('reinvest',lx+9,12);
+  }
+}
+
+// ── Trade + Reinvest combined table ──────────────────────────────────────────
+function renderTable(){
+  const hasSwaps    = state.swaps.length > 0;
+  const hasReinvest = state.reinvests.length > 0;
+  if (!hasSwaps && !hasReinvest){
+    swapCount.classList.add('hidden');
+    tableWrap.innerHTML='<div class="empty-state"><p>No trades yet. Run the simulation.</p></div>';return;
+  }
+
+  const a1=asset1Label.value||'Asset 1', a2=asset2Label.value||'Asset 2';
+
+  // Merge swaps and reinvests, sort by date
+  const allEvents = [
+    ...state.swaps.map(s=>({...s,rowType:'swap'})),
+    ...state.reinvests.map(r=>({...r,rowType:'reinvest'})),
+  ].sort((a,b)=>a.date.localeCompare(b.date));
+
+  const totalEvents = allEvents.length;
+  const rows = allEvents.slice(-500);
+  swapCount.textContent=`${totalEvents} events (${state.swaps.length} swaps + ${state.reinvests.length} reinvests)`;
+  swapCount.classList.remove('hidden');
+
+  const note = totalEvents > 500
+    ? `<p class="table-note">Showing last 500 of ${totalEvents}. Download CSV for full history.</p>` : '';
+
+  const renderRow = e => {
+    if (e.rowType === 'reinvest') {
+      // ── Reinvestment row ──────────────────────────────────────────────────
+      const lotStr = `${qty(e.lotX)} ${a1} + ${qty(e.lotY)} ${a2}`;
+      return `<tr class="tr-reinvest">
+        <td>${new Date(e.date).toLocaleString('en-IN')}</td>
+        <td><span class="pill reinvest-pill">🔄 REINVEST</span></td>
+        <td colspan="2">${lotStr} × ${qty(e.nLots)} lots → +${qty(e.addX)} ${a1}, +${qty(e.addY)} ${a2}</td>
+        <td class="r neg">${inr2(e.rawCost)}</td>
+        <td colspan="2">Both assets at ratio ${qty(e.lotX)}:${qty(e.lotY)}</td>
+        <td class="r">—</td>
+        <td class="r neg">${inr2(e.rawCost)}</td>
+        <td class="r neg">${inr2(e.brok)}</td>
+        <td class="r neg">${inr2(e.spent)}</td>
+        <td class="r">${inr(e.cashProfitAfter)}</td>
+        <td class="r">${qty(e.xShares)}</td>
+        <td class="r">${qty(e.yShares)}</td>
+        <td class="r">—</td>
+        <td class="r pos">${dec(e.LGrowthFactor??1,3)}×L</td>
+        <td><span class="pill reinvest-pill">🔄 REINVEST</span></td>
+      </tr>`;
+    }
+    // ── Swap row ──────────────────────────────────────────────────────────
+    return `<tr class="${e.haltReason?'tr-halted':''}">
+      <td>${new Date(e.date).toLocaleString('en-IN')}</td>
+      <td>${e.action}</td>
+      <td>${e.buyAsset}</td><td class="r">${qty(e.buyQty)}</td><td class="r neg">${inr2(e.cost)}</td>
+      <td>${e.sellAsset}</td><td class="r">${qty(e.sellQty)}</td><td class="r pos">${inr2(e.revenue)}</td>
+      <td class="r ${e.gross>=0?'pos':'neg'}">${inr2(e.gross)}</td>
+      <td class="r neg">${inr2(e.brok)}</td>
+      <td class="r ${e.net>=0?'pos':'neg'}">${inr2(e.net)}</td>
+      <td class="r">${inr(e.cashProfit)}</td>
+      <td class="r">${qty(e.poolX)}</td>
+      <td class="r">${qty(e.poolY)}</td>
+      <td class="r ${e.ilPct>=0?'pos':'neg'}">${dec(e.ilPct,3)}%</td>
+      <td class="r">${dec(e.L??0,0)}</td>
+      <td>${e.haltReason?`<span class="pill halt">${e.haltReason==='ALPHA_PROTECT'?'🛡️':'⛔'}</span>`:''}</td>
+    </tr>`;
+  };
+
+  tableWrap.innerHTML=note+`
+    <div class="tscroll"><table>
+      <thead><tr>
+        <th>Date / Time</th><th>Action / Type</th>
+        <th>Bought / Added</th><th class="r">Qty</th><th class="r">Cost ₹</th>
+        <th>Sold / Details</th><th class="r">Qty</th><th class="r">Revenue ₹</th>
+        <th class="r">Gross ₹</th><th class="r">Brok ₹</th><th class="r">Net / Spent ₹</th>
+        <th class="r">Cash Accum.</th>
+        <th class="r">${a1}</th><th class="r">${a2}</th>
+        <th class="r">IL%</th><th class="r">L / Growth</th><th>Status</th>
+      </tr></thead>
+      <tbody>${rows.map(renderRow).join('')}</tbody>
+    </table></div>`;
+}
+
+// ── Download CSV ──────────────────────────────────────────────────────────────
+function downloadCsv(swaps, reinvests){
+  const sh=['Type','Date','Action','BuyAsset','BuyQty','Cost_INR','SellAsset','SellQty','Rev_INR','Gross_INR','Brok_INR','Net_INR','CashAccum_INR','A1Price','A2Price','A1Shares','A2Shares','IL_Pct','L','rLow','rHigh','TotalVal','HaltReason'];
+  const rh=['Type','Date','LotX','LotY','nLots','AddX','AddY','RawCost_INR','Brok_INR','Spent_INR','CashAfter_INR','A1Price','A2Price','A1Shares','A2Shares','L','LGrowthFactor','rLow','rHigh','PoolValue'];
+
+  const swapLines = [sh.join(',')].concat(swaps.map(r=>[
+    'swap',
+    r.date,`"${r.action}"`,r.buyAsset,Math.round(r.buyQty),dec(r.cost,2),
+    r.sellAsset,Math.round(r.sellQty),dec(r.revenue,2),
+    dec(r.gross,2),dec(r.brok,2),dec(r.net,2),dec(r.cashProfit,2),
+    r.asset1Price,r.asset2Price,Math.round(r.poolX),Math.round(r.poolY),
+    dec(r.ilPct,4),dec(r.L??0,2),dec(r.rLow??0,6),dec(r.rHigh??0,6),
+    dec(r.totalValue,2),r.haltReason||'',
+  ].join(',')));
+
+  const reinvestLines = [rh.join(',')].concat((reinvests||[]).map(r=>[
+    'reinvest',
+    r.date,r.lotX,r.lotY,r.nLots,r.addX,r.addY,
+    dec(r.rawCost,2),dec(r.brok,2),dec(r.spent,2),dec(r.cashProfitAfter,2),
+    r.asset1Price??r.p1,r.asset2Price??r.p2,
+    Math.round(r.xShares),Math.round(r.yShares),
+    dec(r.L??0,2),dec(r.LGrowthFactor??1,4),
+    dec(r.rLow??0,6),dec(r.rHigh??0,6),dec(r.poolValue??0,2),
+  ].join(',')));
+
+  const blob=new Blob([swapLines.join('\n'),'\n\n',reinvestLines.join('\n')],{type:'text/csv'});
+  const url=URL.createObjectURL(blob);
+  Object.assign(document.createElement('a'),{href:url,download:'v3_pool_trades_reinvest.csv'}).click();
+  URL.revokeObjectURL(url);
+}
+
+</script>
+</body>
+</html>

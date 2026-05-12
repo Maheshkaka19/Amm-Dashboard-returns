@@ -1,4 +1,4 @@
-:root{color-scheme:dark;--bg:#07111f;--panel:rgba(13,23,41,0.92);--bord:rgba(148,163,184,0.16);--text:#e2e8f0;--muted:#94a3b8;--accent:#38bdf8;--a2:#818cf8;--pos:#22c55e;--neg:#f97316;--danger:#f43f5e;--gold:#facc15;--purple:#a78bfa;}
+:root{color-scheme:dark;--bg:#07111f;--panel:rgba(13,23,41,0.92);--bord:rgba(148,163,184,0.16);--text:#e2e8f0;--muted:#94a3b8;--accent:#38bdf8;--a2:#818cf8;--pos:#22c55e;--neg:#f97316;--danger:#f43f5e;--gold:#facc15;--purple:#a78bfa;--green:#22c55e;}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 html,body{min-height:100%;font-family:Arial,Helvetica,sans-serif;background:radial-gradient(ellipse at top,rgba(56,189,248,.10),transparent 30%),linear-gradient(180deg,#020617,var(--bg));color:var(--text);}
 button,input{font:inherit;}
@@ -6,9 +6,10 @@ button,input{font:inherit;}
 .sidebar,.content{display:flex;flex-direction:column;gap:14px;min-width:0;}
 .content{overflow:hidden;}
 .card{background:var(--panel);border:1px solid var(--bord);border-radius:14px;padding:15px;backdrop-filter:blur(10px);box-shadow:0 8px 28px rgba(15,23,42,.18);min-width:0;}
-.card-blue  {border-color:rgba(56,189,248,.26);background:rgba(56,189,248,.03);}
-.card-red   {border-color:rgba(244,63,94,.26); background:rgba(244,63,94,.03);}
+.card-blue  {border-color:rgba(56,189,248,.26); background:rgba(56,189,248,.03);}
+.card-red   {border-color:rgba(244,63,94,.26);  background:rgba(244,63,94,.03);}
 .card-purple{border-color:rgba(167,139,250,.26);background:rgba(167,139,250,.03);}
+.card-green {border-color:rgba(34,197,94,.28);  background:rgba(34,197,94,.03);}
 .card-flat  {background:rgba(15,23,42,.40);}
 .card-head  {display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;flex-wrap:wrap;gap:8px;}
 .brand h1{font-size:1.5rem;line-height:1.1;margin-bottom:5px;}
@@ -58,8 +59,18 @@ h2{font-size:0.93rem;margin-bottom:8px;}h3{font-size:0.86rem;margin-bottom:8px;}
 .mc-value{font-size:1.04rem;font-weight:700;word-break:break-word;}
 .mc-delta{font-size:0.74rem;}
 .mc-delta.pos{color:var(--pos);}.mc-delta.neg{color:var(--neg);}
+
+/* ── Performance grid ──────────────────────────────────────────────────────── */
 .perf-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:11px;}
 .perf-box{background:rgba(15,23,42,.52);border-radius:11px;border:1px solid rgba(148,163,184,.08);padding:11px 12px;}
+
+/* Reinvest perf box — green accent */
+.perf-box-reinvest{
+  border-color:rgba(34,197,94,.22);
+  background:rgba(34,197,94,.04);
+}
+.perf-box-reinvest h3{color:#86efac;}
+
 .pr{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;font-size:0.77rem;}
 .pr span{color:var(--muted);}.pr strong{font-size:0.83rem;}
 .pr .pos{color:var(--pos);}.pr .neg{color:var(--neg);}
@@ -67,8 +78,12 @@ h2{font-size:0.93rem;margin-bottom:8px;}h3{font-size:0.86rem;margin-bottom:8px;}
 .pbadge.good{background:rgba(34,197,94,.10); border-color:rgba(34,197,94,.20);  color:#86efac;}
 .pbadge.ok  {background:rgba(250,204,21,.09);border-color:rgba(250,204,21,.18); color:#fde68a;}
 .pbadge.bad {background:rgba(244,63,94,.09); border-color:rgba(244,63,94,.18);  color:#fca5a5;}
+
+/* ── Charts ────────────────────────────────────────────────────────────────── */
 .chart-wrap{width:100%;height:190px;}
 canvas{width:100%!important;height:100%!important;display:block;}
+
+/* ── Flow strips ───────────────────────────────────────────────────────────── */
 .flow-strip{display:flex;align-items:center;gap:0;flex-wrap:wrap;margin:10px 0 6px;overflow-x:auto;}
 .fs-box{flex-shrink:0;border-radius:7px;padding:4px 8px;font-size:0.68rem;font-weight:600;text-align:center;border:1px solid;}
 .fs-box.run {background:rgba(34,197,94,.12); border-color:rgba(34,197,94,.22);  color:#86efac;}
@@ -76,20 +91,42 @@ canvas{width:100%!important;height:100%!important;display:block;}
 .fs-box.wait{background:rgba(148,163,184,.10);border-color:rgba(148,163,184,.20);color:var(--muted);}
 .fs-box.go  {background:rgba(34,197,94,.12); border-color:rgba(34,197,94,.22);  color:#86efac;}
 .fs-arr{font-size:0.65rem;color:var(--muted);padding:0 3px;flex-shrink:0;}
+
+/* ── Protect / reinvest flow list ──────────────────────────────────────────── */
 .protect-flow{margin-top:10px;display:flex;flex-direction:column;gap:6px;}
 .pf-row{display:flex;gap:8px;align-items:flex-start;font-size:0.76rem;color:var(--muted);}
 .pf-num{flex-shrink:0;width:19px;height:19px;border-radius:50%;background:rgba(167,139,250,.18);border:1px solid rgba(167,139,250,.28);color:var(--purple);font-size:0.66rem;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:1px;}
+
+/* Green step numbers for reinvest card */
+.card-green .pf-num{background:rgba(34,197,94,.16);border-color:rgba(34,197,94,.28);color:#86efac;}
+
 .pf-row em{color:var(--gold);font-style:normal;}
+
+/* ── Trade table ───────────────────────────────────────────────────────────── */
 .tscroll{overflow-x:auto;}
 table{width:100%;border-collapse:collapse;min-width:1200px;}
 th,td{padding:5px 7px;text-align:left;border-bottom:1px solid rgba(148,163,184,.06);font-size:0.72rem;white-space:nowrap;}
 th{color:var(--muted);font-size:0.68rem;}
 td.r,th.r{text-align:right;font-variant-numeric:tabular-nums;}
 td.pos{color:var(--pos);font-weight:600;}td.neg{color:var(--neg);}
+
+/* Halted swap rows */
 .tr-halted td{background:rgba(244,63,94,.04);}
+
+/* ── Reinvestment rows ─────────────────────────────────────────────────────── */
+.tr-reinvest td{
+  background:rgba(34,197,94,.05);
+  border-bottom:1px solid rgba(34,197,94,.12);
+}
+.tr-reinvest td.r{color:#86efac;}
+
 .table-note{color:var(--muted);font-size:0.73rem;margin-bottom:6px;}
+
+/* ── Pills ─────────────────────────────────────────────────────────────────── */
 .pill{border-radius:4px;padding:1px 5px;font-size:0.64rem;font-weight:700;}
 .pill.halt{background:rgba(244,63,94,.16);color:#fca5a5;}
+.pill.reinvest-pill{background:rgba(34,197,94,.16);color:#86efac;}
+
 .count-pill{border-radius:999px;padding:3px 8px;background:rgba(129,140,248,.13);color:#c7d2fe;font-size:0.75rem;}
 .empty-state{min-height:90px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:0.83rem;}
 .hidden{display:none!important;}

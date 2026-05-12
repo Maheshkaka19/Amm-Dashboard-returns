@@ -1,4 +1,5 @@
 // simulation-core.js  —  Uniswap V3 Concentrated Liquidity Pool
+//                        + Alpha-Driven Position Reinvestment
 // ─────────────────────────────────────────────────────────────────────────────
 //
 //  UNISWAP V3 MATHEMATICS  (Adams et al. 2021)
@@ -16,31 +17,30 @@
 //    x_virtual = L × (1/√p   − 1/√p_b)    [Asset1]
 //    y_virtual = L × (√p     −   √p_a)    [Asset2]
 //
-//  L is the liquidity parameter (fixed for a given position).
-//  It is computed from deposited capital at initialization:
-//    capital = x_virtual × p1 + y_virtual × p2
-//    L = capital / [ (1/√r − 1/√r_b)×p1 + (√r − √r_a)×p2 ]
-//  where r = p1/p2  (price ratio, the "price" in ratio-space).
-//
 //  SWAP DELTA (price ratio moves r_old → r_new within [r_a, r_b]):
-//    Δx = L × (1/√r_new − 1/√r_old)   [signed; negative = pool releases Asset1]
-//    Δy = L × (√r_new   −   √r_old)   [signed; positive = pool absorbs Asset2]
+//    Δx = L × (1/√r_new − 1/√r_old)
+//    Δy = L × (√r_new   −   √r_old)
 //
-//  NSE TWO-ORDER MECHANIC:
-//  Case A — ratio RISES (r_new > r_old): Δx < 0, Δy > 0
-//    → Pool releases Asset1, absorbs Asset2
-//    → NSE: BUY |Δy| Asset2 from market, SELL |Δx| Asset1 to market
-//  Case B — ratio FALLS (r_new < r_old): Δx > 0, Δy < 0
-//    → Pool releases Asset2, absorbs Asset1
-//    → NSE: BUY |Δx| Asset1 from market, SELL |Δy| Asset2 to market
+//  ALPHA REINVESTMENT MECHANIC:
+//  ────────────────────────────
+//  Lot definition: lotX = 1 share of Asset1,
+//                  lotY = max(1, round(yShares / xShares)) shares of Asset2
+//  This preserves the current pool ratio on each reinvestment.
 //
-//  Quantities rounded to nearest integer. Floor-guarded (never sell last share).
-//  Execute only when net profit > 0 after brokerage on both legs.
+//  Trigger: cashProfit ≥ (lotX × p1 + lotY × p2) × (1 + reinvestBrok)
+//  Action:
+//    nLots = floor(cashProfit / lotCost)
+//    addX  = nLots × lotX
+//    addY  = nLots × lotY
+//    xShares += addX;  yShares += addY   → pool grows
+//    xHold   += addX;  yHold   += addY   → hold benchmark grows symmetrically
+//    cashProfit -= (rawCost + brokerage)
+//    L = computeL(xShares×p1 + yShares×p2, p1, p2, rCur, rLow, rHigh)
 //
-//  RECENTER (out-of-range):
-//  When price exits [p_a, p_b], pool goes entirely into one asset.
-//  We recompute L from current portfolio value at new center price.
-//  Brokerage is NOT charged on recentering — it is a position reset.
+//  Invariant after reinvestment:
+//    IL% is unchanged at the instant of reinvestment (symmetric delta cancels).
+//    Going forward, future swaps continue to generate IL relative to the
+//    expanded hold benchmark.
 //
 //  IL STOP-LOSS + AUTO-RESUME:
 //  Halt swaps when IL% < −ilStopPct. Resume when IL% > −ilResumePct.
@@ -101,21 +101,9 @@ export function buildHourly(a1, a2) {
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 
 // ─── V3 Core: Liquidity parameter ─────────────────────────────────────────────
-//
-// Computes L from capital and price range. This is the only place where
-// the USD value of the position enters; from here on everything is L-based.
-//
-// Formula (NSE two-asset form):
-//   capital = L×(1/√r − 1/√r_b)×p1 + L×(√r − √r_a)×p2
-//   L = capital / denom
-//   where denom = (1/√r − 1/√r_b)×p1 + (√r − √r_a)×p2
-//
-// Edge cases:
-//   r ≤ r_a  → position is 100% Asset2, denom = (√r_b − √r_a)×p2
-//   r ≥ r_b  → position is 100% Asset1, denom = (1/√r_a − 1/√r_b)×p1
 
 function computeL(capital, p1, p2, r, rLow, rHigh) {
-  const sr  = Math.sqrt(clamp(r,    rLow, rHigh));
+  const sr  = Math.sqrt(clamp(r, rLow, rHigh));
   const sra = Math.sqrt(rLow);
   const srb = Math.sqrt(rHigh);
   const denom = (1/sr - 1/srb) * p1 + (sr - sra) * p2;
@@ -129,29 +117,20 @@ function v3Reserves(L, r, rLow, rHigh) {
   const sra = Math.sqrt(rLow);
   const srb = Math.sqrt(rHigh);
   return {
-    x: L * (1/sr - 1/srb),   // Asset1 (can be fractional)
-    y: L * (sr   - sra),     // Asset2 (can be fractional)
+    x: L * (1/sr - 1/srb),
+    y: L * (sr   - sra),
   };
 }
 
 // ─── V3 Core: Swap delta ───────────────────────────────────────────────────────
-//
-// Price ratio moves rOld → rNew (both within [rLow, rHigh]).
-//
-// Returns signed deltas:
-//   dx = L × (1/√rNew − 1/√rOld)   negative → pool releases Asset1
-//   dy = L × (√rNew   −   √rOld)   positive → pool absorbs Asset2
-//
-// The NSE orders mirror these:
-//   dx < 0:  BUY |dy| Asset2 from NSE, SELL |dx| Asset1 to NSE
-//   dx > 0:  BUY |dx| Asset1 from NSE, SELL |dy| Asset2 to NSE
 
 function v3SwapDelta(L, rOld, rNew) {
   const srOld = Math.sqrt(rOld);
   const srNew = Math.sqrt(rNew);
-  const dx = L * (1/srNew - 1/srOld);   // Asset1 delta
-  const dy = L * (srNew   -   srOld);   // Asset2 delta
-  return { dx, dy };
+  return {
+    dx: L * (1/srNew - 1/srOld),
+    dy: L * (srNew   -   srOld),
+  };
 }
 
 // ─── Performance summary ───────────────────────────────────────────────────────
@@ -165,22 +144,31 @@ export function buildPerformanceSummary(swapRecords, equityCurve, results) {
   const successful    = swapRecords.filter(r => (r.net ?? 0) > 0).length;
   const successRate   = swapRecords.length > 0 ? successful / swapRecords.length : 0;
 
+  // Alpha drawdown on equity curve
   const alpha = equityCurve.map(p => (p.poolValue ?? 0) - (p.holdValue ?? 0));
   let peak = alpha[0] ?? 0, maxDD = 0;
   for (const v of alpha) { if (v > peak) peak = v; if (v - peak < maxDD) maxDD = v - peak; }
   const maxDDPct = equityCurve[0]?.holdValue > 0 ? maxDD / equityCurve[0].holdValue * 100 : 0;
 
+  // Alpha Sharpe
   const aRets = alpha.slice(1).map((v, i) => v - alpha[i]);
   const mr = aRets.length ? aRets.reduce((s, v) => s + v, 0) / aRets.length : 0;
   let v2 = 0; for (const v of aRets) v2 += (v - mr) ** 2;
   const sd = aRets.length > 1 ? Math.sqrt(v2 / (aRets.length - 1)) : 1e-9;
   const alphaSharpe = sd > 1e-12 ? (mr / sd) * ANNUALISE : 0;
 
-  // Concentration factor vs full-range
   const rCenter = results.rCenter ?? 1;
   const rLow    = results.rLow    ?? rCenter * 0.8;
   const rHigh   = results.rHigh   ?? rCenter * 1.2;
-  const concentrationFactor = 1 / (1 - Math.sqrt(rLow / rHigh));
+  const concentrationFactor = rLow > 0 ? 1 / (1 - Math.sqrt(rLow / rHigh)) : 1;
+
+  // Reinvest narrative
+  const rc = results.reinvestCount ?? 0;
+  const rv = results.totalReinvestedRaw ?? 0;
+  const lg = results.LGrowthFactor ?? 1;
+  const reinvestNarrative = rc > 0
+    ? `${rc} lots reinvested · ₹${(rv/1e5).toFixed(2)}L deployed · L grew ${lg.toFixed(2)}× · compounding active`
+    : 'No reinvestments yet — accumulate alpha to trigger';
 
   return {
     grossFees, totalFriction,
@@ -192,6 +180,12 @@ export function buildPerformanceSummary(swapRecords, equityCurve, results) {
     alphaSharpe, concentrationFactor,
     unrealizedIL: results.ilINR,
     netAlphaFinal: results.vsHold,
+    reinvestCount: rc,
+    totalReinvestedRaw: rv,
+    totalReinvestBrok: results.totalReinvestBrok ?? 0,
+    LInitial: results.LInitial ?? results.L,
+    LFinal:   results.L,
+    LGrowthFactor: lg,
     narrative: {
       friction: frictionRatio < 0.10 ? 'GOOD — friction < 10% of gross'
                : frictionRatio < 0.25 ? 'MODERATE'
@@ -203,6 +197,7 @@ export function buildPerformanceSummary(swapRecords, equityCurve, results) {
       ilStatus: results.ilPct >= 0 ? 'POSITIVE — pool assets exceed hold value'
                : `NEGATIVE — ${Math.abs(results.ilINR).toLocaleString('en-IN', { maximumFractionDigits: 0 })} below hold`,
       concentration: `${concentrationFactor.toFixed(1)}× amplification vs full-range pool`,
+      reinvest: reinvestNarrative,
     },
   };
 }
@@ -220,42 +215,47 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
     return { error: 'No overlapping timestamps. Confirm both CSVs cover the same period.' };
 
   // ── Config ──────────────────────────────────────────────────────────────────
-  // Band half-width as a fraction (e.g. 0.20 = ±20% range = 40% total range)
-  const bandPct    = clamp(+(config.bandPct       ?? 20.0), 0.5, 99) / 100;
-  const buyBrok    = clamp(+(config.buyBrokeragePct  ?? 0.15), 0, 5) / 100;
-  const sellBrok   = clamp(+(config.sellBrokeragePct ?? 0.15), 0, 5) / 100;
+  const bandPct    = clamp(+(config.bandPct          ?? 20.0), 0.5, 99) / 100;
+  const buyBrok    = clamp(+(config.buyBrokeragePct  ?? 0.15), 0, 5)   / 100;
+  const sellBrok   = clamp(+(config.sellBrokeragePct ?? 0.15), 0, 5)   / 100;
 
-  const ilStopPct   = clamp(+(config.ilStopLossPct ?? 0), 0, 100);   // 0 = disabled
+  const ilStopPct   = clamp(+(config.ilStopLossPct ?? 0), 0, 100);
   const ilResumePct = clamp(+(config.ilResumePct   ?? 0), 0, 100);
 
   const alphaProtectThresh = clamp(+(config.alphaProtectThresholdPct ?? 0.3), 0, 100);
   const alphaProtectOn     = config.alphaProtectEnabled !== false;
 
-  // ── Initialise pool ──────────────────────────────────────────────────────────
-  const h0   = hourly[0];
-  const p1_0 = h0.c1, p2_0 = h0.c2;
+  // Reinvestment config
+  const reinvestEnabled = config.reinvestEnabled !== false;
+  const reinvestBrokPct = clamp(+(config.reinvestBrokeragePct ?? config.buyBrokeragePct ?? 0.15), 0, 5) / 100;
 
-  // Initial price ratio (Asset1/Asset2)
+  // ── Initialise pool ──────────────────────────────────────────────────────────
+  const h0    = hourly[0];
+  const p1_0  = h0.c1, p2_0 = h0.c2;
   let rCenter = p1_0 / p2_0;
   let rLow    = rCenter * (1 - bandPct);
   let rHigh   = rCenter * (1 + bandPct);
 
-  // Compute initial L from real capital
   let L = computeL(realCapital, p1_0, p2_0, rCenter, rLow, rHigh);
   if (L <= 0) return { error: 'Band width too small or capital too low — L is zero.' };
 
-  // Integer share positions (real NSE holdings)
   const res0 = v3Reserves(L, rCenter, rLow, rHigh);
-  let xShares = Math.max(1, Math.round(res0.x));  // Asset1 integer shares
-  let yShares = Math.max(1, Math.round(res0.y));  // Asset2 integer shares
+  let xShares = Math.max(1, Math.round(res0.x));
+  let yShares = Math.max(1, Math.round(res0.y));
 
-  // Hold reference (unchanged throughout)
-  const xInit = xShares;
-  const yInit = yShares;
-  const initCapital = xInit * p1_0 + yInit * p2_0;
+  // Fixed initial reference (never changes — used for initial capital display)
+  const xInit0     = xShares;
+  const yInit0     = yShares;
+  const initCapital = xInit0 * p1_0 + yInit0 * p2_0;
+  const LInitial   = L;
+
+  // Mutable hold benchmark — grows when reinvested shares are purchased
+  // Invariant: xShares - xHold reflects only AMM-induced drift, never reinvestment
+  let xHold = xShares;
+  let yHold = yShares;
 
   // ── State ────────────────────────────────────────────────────────────────────
-  let rPrev          = rCenter;  // ratio at end of previous hour
+  let rPrev          = rCenter;
   let cashProfit     = 0;
   let totalBrokerage = 0;
   let grossSwapFees  = 0;
@@ -270,30 +270,38 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   let haltCount      = 0;
   let alphaProtected = false;
 
-  const swapRecords  = [];
-  const equityCurve  = [];
+  // Reinvestment state
+  const reinvestRecords  = [];
+  let reinvestCount      = 0;
+  let totalReinvestedRaw = 0;   // gross capital deployed via reinvestment
+  let totalReinvestBrok  = 0;   // brokerage paid on reinvestment
+  let totalCapDeployed   = initCapital;
+
+  const swapRecords = [];
+  const equityCurve = [];
 
   equityCurve.push({
     date: h0.date.toISOString(),
     poolValue: initCapital, holdValue: initCapital,
     cashProfit: 0, alphaINR: 0, ilPct: 0,
-    rCenter, rLow, rHigh, L,
-    halted: false, haltReason: null,
+    rCenter, rLow, rHigh, L, LInitial,
+    halted: false, haltReason: null, reinvested: false,
   });
 
   // ── Hour loop ─────────────────────────────────────────────────────────────────
   for (let idx = 1; idx < hourly.length; idx++) {
-    const row  = hourly[idx];
-    const p1   = row.c1, p2 = row.c2;
-    const rNew = p1 / p2;   // current ratio
+    const row = hourly[idx];
+    const p1  = row.c1, p2 = row.c2;
+    const rNew = p1 / p2;
 
-    // Current real portfolio values
-    const pvNow = xShares * p1 + yShares * p2;
-    const hvNow = xInit   * p1 + yInit   * p2;
+    // ── Portfolio values for guard checks ────────────────────────────────────
+    const pvNow      = xShares * p1 + yShares * p2;
+    const hvNow      = xHold   * p1 + yHold   * p2;
     const ilPctNow   = hvNow > 0 ? (pvNow / hvNow - 1) * 100 : 0;
+    // cashRoi uses initCapital so alpha-protection threshold is stable
     const cashRoiNow = initCapital > 0 ? cashProfit / initCapital * 100 : 0;
 
-    // ── AUTO-RESUME ────────────────────────────────────────────────────────────
+    // ── AUTO-RESUME ──────────────────────────────────────────────────────────
     if (swapsHalted) {
       if (haltReason === 'IL_STOP' && ilResumePct > 0 && ilPctNow >= -ilResumePct) {
         swapsHalted = false; haltReason = null; ilResumedAt = row.date.toISOString();
@@ -302,7 +310,7 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
       }
     }
 
-    // ── HALT CHECKS ────────────────────────────────────────────────────────────
+    // ── HALT CHECKS ──────────────────────────────────────────────────────────
     if (!swapsHalted) {
       if (ilStopPct > 0 && ilPctNow < -ilStopPct) {
         swapsHalted = true; haltReason = 'IL_STOP';
@@ -318,10 +326,9 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
       }
     }
 
-    // ── OUT OF RANGE → RECENTER ────────────────────────────────────────────────
+    // ── OUT OF RANGE → RECENTER ───────────────────────────────────────────────
+    let didRecenter = false;
     if (rNew < rLow || rNew > rHigh) {
-      // Recompute position at new center, preserving portfolio value.
-      // No brokerage on recenter — this is a position rebalance, not an NSE order.
       const capNow = xShares * p1 + yShares * p2;
       rCenter = rNew;
       rLow    = rCenter * (1 - bandPct);
@@ -334,40 +341,25 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
       }
       rPrev = rCenter;
       recenterCount++;
-
-      const pv2 = xShares * p1 + yShares * p2;
-      const hv2 = xInit   * p1 + yInit   * p2;
-      equityCurve.push({
-        date: row.date.toISOString(),
-        poolValue: pv2 + cashProfit, holdValue: hv2,
-        cashProfit, alphaINR: pv2 + cashProfit - hv2,
-        ilPct: hv2 > 0 ? (pv2/hv2-1)*100 : 0,
-        rCenter, rLow, rHigh, L,
-        halted: swapsHalted, haltReason,
-      });
-      continue;
+      didRecenter = true;
     }
 
-    // ── IN RANGE → V3 SWAP ────────────────────────────────────────────────────
-    if (!swapsHalted) {
+    // ── IN RANGE → V3 SWAP ───────────────────────────────────────────────────
+    if (!didRecenter && !swapsHalted) {
       const { dx, dy } = v3SwapDelta(L, rPrev, rNew);
-
-      // Convert continuous V3 deltas to integer NSE share counts
       const absDx = Math.abs(dx);
       const absDy = Math.abs(dy);
       const dxInt = absDx >= 0.5 ? Math.round(absDx) : 0;
       const dyInt = absDy >= 0.5 ? Math.round(absDy) : 0;
 
       if (dxInt >= 1 && dyInt >= 1) {
-        let didSwap = false;
-
         if (dx < 0) {
-          // ── Ratio ROSE: pool releases Asset1, absorbs Asset2 ────────────────
+          // Ratio ROSE: pool releases Asset1, absorbs Asset2
           // NSE: BUY dyInt Asset2, SELL dxInt Asset1
-          const sellQty = Math.min(dxInt, xShares - 1);  // floor guard
+          const sellQty = Math.min(dxInt, xShares - 1);
           if (sellQty >= 1) {
-            const cost    = dyInt   * p2;  // pay for Asset2
-            const revenue = sellQty * p1;  // receive from selling Asset1
+            const cost    = dyInt   * p2;
+            const revenue = sellQty * p1;
             const brok    = buyBrok * cost + sellBrok * revenue;
             const gross   = revenue - cost;
             const net     = gross - brok;
@@ -378,11 +370,11 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
               totalBrokerage += brok;
               grossSwapFees  += gross;
               totalSwaps++; successSwaps++;
-              didSwap = true;
 
               const pvS = xShares * p1 + yShares * p2;
-              const hvS = xInit   * p1 + yInit   * p2;
+              const hvS = xHold   * p1 + yHold   * p2;
               swapRecords.push({
+                type: 'swap',
                 date: row.date.toISOString(),
                 action: 'Buy Asset 2 / Sell Asset 1',
                 buyAsset: 'Asset 2', buyQty: dyInt,   cost,
@@ -392,14 +384,12 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
                 poolX: xShares, poolY: yShares,
                 ilPct: hvS > 0 ? (pvS/hvS-1)*100 : 0,
                 totalValue: pvS + cashProfit,
-                haltReason, rLow, rHigh, rCenter, L,
-                dx, dy,  // raw V3 deltas (for transparency)
+                haltReason, rLow, rHigh, rCenter, L, dx, dy,
               });
             }
           }
-
         } else if (dx > 0) {
-          // ── Ratio FELL: pool releases Asset2, absorbs Asset1 ────────────────
+          // Ratio FELL: pool releases Asset2, absorbs Asset1
           // NSE: BUY dxInt Asset1, SELL dyInt Asset2
           const sellQty = Math.min(dyInt, yShares - 1);
           if (sellQty >= 1) {
@@ -415,11 +405,11 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
               totalBrokerage += brok;
               grossSwapFees  += gross;
               totalSwaps++; successSwaps++;
-              didSwap = true;
 
               const pvS = xShares * p1 + yShares * p2;
-              const hvS = xInit   * p1 + yInit   * p2;
+              const hvS = xHold   * p1 + yHold   * p2;
               swapRecords.push({
+                type: 'swap',
                 date: row.date.toISOString(),
                 action: 'Buy Asset 1 / Sell Asset 2',
                 buyAsset: 'Asset 1', buyQty: dxInt,   cost,
@@ -429,8 +419,7 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
                 poolX: xShares, poolY: yShares,
                 ilPct: hvS > 0 ? (pvS/hvS-1)*100 : 0,
                 totalValue: pvS + cashProfit,
-                haltReason, rLow, rHigh, rCenter, L,
-                dx, dy,
+                haltReason, rLow, rHigh, rCenter, L, dx, dy,
               });
             }
           }
@@ -438,40 +427,127 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
       }
     }
 
-    rPrev = rNew;  // update ratio for next hour's delta calculation
+    if (!didRecenter) rPrev = rNew;
 
-    // ── Equity snapshot ─────────────────────────────────────────────────────────
+    // ── ALPHA REINVESTMENT ────────────────────────────────────────────────────
+    //
+    // Lot = 1 share Asset1 + round(yShares/xShares) shares Asset2
+    // This mirrors the current V3 pool composition ratio.
+    //
+    // We buy N = floor(cashProfit / lotCost) lots so that ALL available
+    // alpha is deployed in one atomic step, minimising idle cash.
+    //
+    // Both xHold and yHold expand by the same addX/addY, preserving the
+    // IL accounting invariant at the instant of reinvestment.
+    // ──────────────────────────────────────────────────────────────────────────
+    let didReinvest = false;
+    if (reinvestEnabled && cashProfit > 0 && xShares > 0 && yShares > 0) {
+      // Current-ratio lot (minimum 1:1 floor on Asset2 side)
+      const lotX    = 1;
+      const lotY    = Math.max(1, Math.round(yShares / xShares));
+      const lotRaw  = lotX * p1 + lotY * p2;
+      const lotBrok = reinvestBrokPct * lotRaw;
+      const lotCost = lotRaw + lotBrok;           // total cost per lot inc. brok
+
+      if (lotCost > 1e-6 && cashProfit >= lotCost) {
+        const nLots   = Math.floor(cashProfit / lotCost);
+        const addX    = nLots * lotX;             // integer Asset1 shares to add
+        const addY    = nLots * lotY;             // integer Asset2 shares to add
+        const rawCost = addX * p1 + addY * p2;   // market value of new shares
+        const brok    = reinvestBrokPct * rawCost;
+        const spent   = rawCost + brok;
+
+        // Final guard: ensure we have enough cash (floating-point safety)
+        if (spent > 0 && cashProfit >= spent && addX >= 1 && addY >= 1) {
+
+          // 1) Add shares to live pool
+          xShares += addX;
+          yShares += addY;
+
+          // 2) Expand hold benchmark by the same amounts so that IL at this
+          //    instant is unchanged (symmetric delta: new shares cancel in IL
+          //    numerator and denominator). Future swap drift will again
+          //    diverge xShares from xHold, generating meaningful IL signal.
+          xHold += addX;
+          yHold += addY;
+
+          // 3) Cash accounting
+          cashProfit         -= spent;
+          totalBrokerage     += brok;
+          totalReinvestBrok  += brok;
+          totalReinvestedRaw += rawCost;
+          totalCapDeployed   += rawCost;
+          reinvestCount++;
+          didReinvest = true;
+
+          // 4) Recompute L from new pool capital
+          //    Clamp rCur to [rLow, rHigh] to handle edge timing
+          const rCur    = clamp(rNew, rLow, rHigh);
+          const capAfter = xShares * p1 + yShares * p2;
+          L = computeL(capAfter, p1, p2, rCur, rLow, rHigh);
+
+          reinvestRecords.push({
+            type: 'reinvest',
+            date:  row.date.toISOString(),
+            lotX, lotY, nLots,
+            addX,  addY,
+            rawCost, brok, spent,
+            cashProfitAfter: cashProfit,
+            xShares, yShares,
+            xHold, yHold,
+            L,
+            asset1Price: p1,
+            asset2Price: p2,
+            rCenter, rLow, rHigh,
+            poolValue:   xShares * p1 + yShares * p2,
+            reinvestCount,
+            totalReinvestedRaw,
+            LGrowthFactor: LInitial > 0 ? L / LInitial : 1,
+          });
+        }
+      }
+    }
+
+    // ── Equity snapshot ───────────────────────────────────────────────────────
     const pv = xShares * p1 + yShares * p2;
-    const hv = xInit   * p1 + yInit   * p2;
+    const hv = xHold   * p1 + yHold   * p2;
     equityCurve.push({
       date: row.date.toISOString(),
-      poolValue: pv + cashProfit, holdValue: hv,
-      cashProfit, alphaINR: pv + cashProfit - hv,
-      ilPct: hv > 0 ? (pv/hv-1)*100 : 0,
-      rCenter, rLow, rHigh, L,
-      halted: swapsHalted, haltReason,
+      poolValue:  pv + cashProfit,
+      holdValue:  hv,
+      cashProfit,
+      alphaINR:   pv + cashProfit - hv,
+      ilPct:      hv > 0 ? (pv/hv-1)*100 : 0,
+      rCenter, rLow, rHigh, L, LInitial,
+      halted:     swapsHalted,
+      haltReason,
+      reinvested: didReinvest,
     });
   }
 
   // ── Final results ─────────────────────────────────────────────────────────────
   const last       = hourly[hourly.length - 1];
-  const holdValue  = xInit   * last.c1 + yInit   * last.c2;
+  const holdValue  = xHold   * last.c1 + yHold   * last.c2;
   const poolAssets = xShares * last.c1 + yShares * last.c2;
   const totalValue = poolAssets + cashProfit;
   const ilINR      = poolAssets - holdValue;
   const ilPct      = holdValue > 0 ? (poolAssets / holdValue - 1) * 100 : 0;
   const vsHold     = totalValue - holdValue;
   const vsHoldPct  = holdValue  > 0 ? (totalValue / holdValue - 1) * 100 : 0;
-
-  // Concentration factor (V3 amplification vs full-range)
   const concentrationFactor = rLow > 0 ? 1 / (1 - Math.sqrt(rLow / rHigh)) : 1;
 
+  // Total swap income ever generated (before spending on reinvestment)
+  const totalSwapIncome = cashProfit + totalReinvestedRaw + totalReinvestBrok;
+
   const results = {
-    realCapital, initCapital, totalValue, poolAssets, holdValue,
+    realCapital, initCapital, totalCapDeployed,
+    totalValue, poolAssets, holdValue,
     cashProfit, totalBrokerage, grossSwapFees,
+    totalSwapIncome,
+    totalSwapRoi: initCapital > 0 ? totalSwapIncome / initCapital * 100 : 0,
     vsHold, vsHoldPct,
     roiPct:   initCapital > 0 ? (totalValue  / initCapital - 1) * 100 : 0,
-    holdRoi:  initCapital > 0 ? (holdValue   / initCapital - 1) * 100 : 0,
+    holdRoi:  totalCapDeployed > 0 ? (holdValue   / totalCapDeployed - 1) * 100 : 0,
     cashRoi:  initCapital > 0 ?  cashProfit  / initCapital * 100 : 0,
     brokRoi:  initCapital > 0 ?  totalBrokerage / initCapital * 100 : 0,
     ilINR, ilPct,
@@ -479,12 +555,21 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
     haltCount, alphaProtected,
     totalSwaps, successSwaps, recenterCount,
     successRate: totalSwaps > 0 ? successSwaps / totalSwaps : 0,
-    initialX: xInit, initialY: yInit, finalX: xShares, finalY: yShares,
+    initialX: xInit0, initialY: yInit0,
+    finalX: xShares, finalY: yShares,
+    xHold, yHold,
     bandPct: bandPct * 100, concentrationFactor,
-    rCenter, rLow, rHigh, L,
-    buyBrokeragePct: buyBrok * 100, sellBrokeragePct: sellBrok * 100,
+    rCenter, rLow, rHigh, L, LInitial,
+    LGrowthFactor: LInitial > 0 ? L / LInitial : 1,
+    buyBrokeragePct:  buyBrok  * 100,
+    sellBrokeragePct: sellBrok * 100,
+    // Reinvestment
+    reinvestEnabled,
+    reinvestCount,
+    totalReinvestedRaw,
+    totalReinvestBrok,
   };
 
   const performanceSummary = buildPerformanceSummary(swapRecords, equityCurve, results);
-  return { swaps: swapRecords, equityCurve, results, performanceSummary };
+  return { swaps: swapRecords, equityCurve, results, performanceSummary, reinvests: reinvestRecords };
 }

@@ -11,33 +11,46 @@
   <aside class="sidebar">
 
     <div class="brand">
-      <p class="eyebrow">Uniswap V3 Mathematics · NSE Stocks · Real IL · Real Swaps</p>
+      <p class="eyebrow">Uniswap V3 Mathematics · NSE Stocks · Real IL · Alpha Reinvestment</p>
       <h1>V3 Concentrated Pool</h1>
       <p class="lede">
-        True Uniswap V3 liquidity math. Swap deltas are computed from
+        Fixed concentrated liquidity band. Swap deltas from
         <code>Δx = L·(1/√r_new − 1/√r_old)</code> and <code>Δy = L·(√r_new − √r_old)</code>.
-        Executed as two simultaneous NSE market orders. Stop-loss and
-        alpha-protection guard the downside.
+        Alpha reinvestment compounds L over time — each lot purchased at the
+        current pool ratio re-deploys cash profit back into the pool.
       </p>
     </div>
 
+    <!-- ── Datasets ──────────────────────────────────────────────────────── -->
     <section class="card">
       <h2>Datasets</h2>
-      <label class="upload"><span id="asset1FileName">Upload Asset 1 — 1-min CSV</span><input id="asset1File" type="file" accept=".csv,text/csv"/></label>
-      <label class="field" style="margin-top:6px">Label <input id="asset1Label" type="text" value="Reliance"/></label>
-      <label class="upload" style="margin-top:8px"><span id="asset2FileName">Upload Asset 2 — 1-min CSV</span><input id="asset2File" type="file" accept=".csv,text/csv"/></label>
-      <label class="field" style="margin-top:6px">Label <input id="asset2Label" type="text" value="Kotak Bank"/></label>
+      <label class="upload">
+        <span id="asset1FileName">Upload Asset 1 — 1-min CSV</span>
+        <input id="asset1File" type="file" accept=".csv,text/csv"/>
+      </label>
+      <label class="field" style="margin-top:6px">Label
+        <input id="asset1Label" type="text" value="Reliance"/>
+      </label>
+      <label class="upload" style="margin-top:8px">
+        <span id="asset2FileName">Upload Asset 2 — 1-min CSV</span>
+        <input id="asset2File" type="file" accept=".csv,text/csv"/>
+      </label>
+      <label class="field" style="margin-top:6px">Label
+        <input id="asset2Label" type="text" value="Kotak Bank"/>
+      </label>
       <button id="runSimulation" class="btn-primary">▶ Run Simulation</button>
     </section>
 
+    <!-- ── Capital ───────────────────────────────────────────────────────── -->
     <section class="card">
       <h2>Capital</h2>
       <label class="field">Capital (₹)
         <input id="realCapital" type="number" min="10000" step="100000" value="2000000"/>
-        <span class="sub-hint">Split 50/50 between assets to initialise L</span>
+        <span class="sub-hint">Split via V3 reserves at opening ratio to initialise L</span>
       </label>
     </section>
 
+    <!-- ── Concentration Band ────────────────────────────────────────────── -->
     <section class="card card-blue">
       <h2>🎯 Concentration Band</h2>
       <label class="field">Band Half-Width ± (%)
@@ -45,9 +58,9 @@
       </label>
       <div id="bandLabel" class="band-info"></div>
       <div class="info-box" style="margin-top:8px">
-        <strong>How V3 concentration works:</strong><br/>
-        Narrower band → higher amplification → more fees per ₹ deployed, but larger IL when price exits.<br/>
-        Wider band → lower amplification, less IL risk, fewer recenters.<br/>
+        <strong>Fixed band.</strong> The band stays at ±% around the
+        initialisation price. When price exits the range a recenter fires —
+        L is recomputed from current portfolio value, no brokerage charged.<br/>
         Formula: concentration = 1 / (1 − √(p_lower/p_upper))
       </div>
       <div class="band-table">
@@ -59,15 +72,79 @@
       </div>
     </section>
 
+    <!-- ── Brokerage ─────────────────────────────────────────────────────── -->
     <section class="card">
       <h2>Brokerage</h2>
       <div class="two-col">
-        <label class="field">Buy (%) <input id="buyBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/></label>
-        <label class="field">Sell (%) <input id="sellBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/></label>
+        <label class="field">Buy (%)
+          <input id="buyBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
+        </label>
+        <label class="field">Sell (%)
+          <input id="sellBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
+        </label>
       </div>
       <p class="hint">Each swap executes only when revenue − cost − brokerage &gt; 0.</p>
     </section>
 
+    <!-- ── Alpha Reinvestment ────────────────────────────────────────────── -->
+    <section class="card card-green">
+      <h2>🔄 Alpha Reinvestment</h2>
+      <label class="checkbox">
+        <input id="reinvestEnabled" type="checkbox" checked/>
+        Enable alpha reinvestment
+      </label>
+      <p class="hint" style="margin-top:6px">
+        When accumulated cash alpha can buy ≥ 1 lot — defined as
+        <strong>1 share Asset1 + round(Y/X) shares Asset2</strong> at the
+        current pool ratio — those shares are purchased and added to the pool.
+        L is recomputed from the new total holdings, compounding fee generation
+        on every future swap.
+      </p>
+      <label class="field" style="margin-top:10px">Reinvestment Brokerage (%)
+        <input id="reinvestBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
+        <span class="sub-hint">Applied on both stock purchases (two buy orders)</span>
+      </label>
+      <div class="protect-flow" style="margin-top:10px">
+        <div class="pf-row">
+          <span class="pf-num">①</span>
+          <span>Cash alpha accumulates from profitable AMM swaps</span>
+        </div>
+        <div class="pf-row">
+          <span class="pf-num">②</span>
+          <span>
+            Lot = 1 share A + <em>round(Y/X)</em> shares B at current ratio.<br/>
+            Example: pool 50 : 150 → lot = 1 A + 3 B
+          </span>
+        </div>
+        <div class="pf-row">
+          <span class="pf-num">③</span>
+          <span>
+            N = floor(cash / lot cost inc. brok). All N lots bought atomically.
+          </span>
+        </div>
+        <div class="pf-row">
+          <span class="pf-num">④</span>
+          <span>
+            xShares += N, yShares += N × round(Y/X). Hold benchmark expands
+            symmetrically — IL invariant preserved at reinvestment instant.
+          </span>
+        </div>
+        <div class="pf-row">
+          <span class="pf-num">⑤</span>
+          <span>
+            L recomputed from new pool capital → higher future fee harvest.
+            <em>Compounds indefinitely while swaps generate alpha.</em>
+          </span>
+        </div>
+      </div>
+      <div class="info-box" style="margin-top:10px">
+        <strong>Accounting note:</strong> The hold benchmark (xHold, yHold) grows
+        with each reinvestment, so IL reflects only AMM-induced divergence, not
+        reinvestment timing. vsHold = totalValue − holdValue is always apples-to-apples.
+      </div>
+    </section>
+
+    <!-- ── IL Stop-Loss ──────────────────────────────────────────────────── -->
     <section class="card card-red">
       <h2>🛑 IL Stop-Loss &amp; Auto-Resume</h2>
       <div class="two-col">
@@ -87,11 +164,17 @@
         <div class="fs-box go">IL &gt; −Resume%</div><div class="fs-arr">→</div>
         <div class="fs-box run">Active</div>
       </div>
+      <p class="hint">Note: reinvestment continues even when swaps are halted —
+        it only deploys idle cash, it does not execute new AMM swaps.</p>
     </section>
 
+    <!-- ── Alpha Protection ──────────────────────────────────────────────── -->
     <section class="card card-purple">
       <h2>🛡️ Alpha-Protection</h2>
-      <label class="checkbox"><input id="alphaProtectEnabled" type="checkbox" checked/> Enable alpha protection</label>
+      <label class="checkbox">
+        <input id="alphaProtectEnabled" type="checkbox" checked/>
+        Enable alpha protection
+      </label>
       <label class="field" style="margin-top:8px">Activate after cash ROI (%)
         <input id="alphaProtectThresholdPct" type="number" min="0" max="50" step="0.1" value="0.3"/>
         <span class="sub-hint">0 = protect from hour 1</span>
@@ -99,11 +182,12 @@
       <div class="protect-flow">
         <div class="pf-row"><span class="pf-num">①</span><span>Cash profit builds until it crosses Activate %</span></div>
         <div class="pf-row"><span class="pf-num">②</span><span>Watch whether <em>|IL%| ≥ Cash ROI%</em></span></div>
-        <div class="pf-row"><span class="pf-num">③</span><span>If yes → halt. Total value ≈ hold (net zero)</span></div>
+        <div class="pf-row"><span class="pf-num">③</span><span>If yes → halt swaps. Total value ≈ hold (net zero)</span></div>
         <div class="pf-row"><span class="pf-num">④</span><span>When IL retreats → resume harvesting</span></div>
       </div>
     </section>
 
+    <!-- ── CSV Format ────────────────────────────────────────────────────── -->
     <section class="card card-flat">
       <h2>CSV Format</h2>
       <ul>
@@ -114,44 +198,86 @@
       </ul>
     </section>
 
-  </aside>
+  </aside><!-- /sidebar -->
 
+  <!-- ── Content ─────────────────────────────────────────────────────────── -->
   <section class="content">
+
     <div id="statusBanner" class="status-banner status-info">
       <strong>INFO:</strong> <span>Upload two 1-minute CSV files and click Run Simulation.</span>
     </div>
     <div id="haltBanner" class="halt-banner hidden"></div>
 
+    <!-- Metrics -->
     <div class="card">
       <div class="card-head">
-        <div><p class="eyebrow">Results — Uniswap V3 Concentrated Liquidity</p><h2 id="pairHeading">Reliance  ↔  Kotak Bank</h2></div>
+        <div>
+          <p class="eyebrow">Results — Uniswap V3 Concentrated Liquidity + Alpha Reinvestment</p>
+          <h2 id="pairHeading">Reliance  ↔  Kotak Bank</h2>
+        </div>
         <button id="downloadCsv" class="btn-secondary hidden">⬇ CSV</button>
       </div>
-      <div id="metricsGrid" class="metric-grid"><div class="empty-state"><p>Upload CSV files and run.</p></div></div>
+      <div id="metricsGrid" class="metric-grid">
+        <div class="empty-state"><p>Upload CSV files and run.</p></div>
+      </div>
     </div>
 
+    <!-- Performance -->
     <div class="card">
-      <div class="card-head"><div><p class="eyebrow">Performance Summary</p><h2>Harvest · Risk · Quality · V3 Concentration</h2></div></div>
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">Performance Summary</p>
+          <h2>Harvest · Risk · Quality · V3 Concentration · 🔄 Reinvestment</h2>
+        </div>
+      </div>
       <div id="perfPanel"><div class="empty-state"><p>Run simulation first.</p></div></div>
     </div>
 
+    <!-- Equity chart -->
     <div class="card">
-      <div class="card-head"><div><p class="eyebrow">Portfolio Value</p><h2>AMM Total · Hold · Cash Profit · yellow = swap · red shading = halted</h2></div></div>
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">Portfolio Value</p>
+          <h2>AMM Total · Hold · Cash Profit &nbsp;|&nbsp; 🟡 swap &nbsp; 🟢 reinvest &nbsp; 🔴 halted</h2>
+        </div>
+      </div>
       <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
     </div>
 
+    <!-- Alpha / IL chart -->
     <div class="card">
-      <div class="card-head"><div><p class="eyebrow">Net Alpha &amp; IL</p><h2>Alpha ₹ · IL% (scaled) · red shading = halted</h2></div></div>
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">Net Alpha &amp; IL</p>
+          <h2>Alpha ₹ · IL% (scaled) &nbsp;|&nbsp; 🟢 green bar = reinvestment event</h2>
+        </div>
+      </div>
       <div class="chart-wrap"><canvas id="alphaChart"></canvas></div>
     </div>
 
+    <!-- L-growth chart -->
     <div class="card">
       <div class="card-head">
-        <div><p class="eyebrow">Trade History</p><h2>V3 swaps with L, dx/dy, full P&amp;L breakdown</h2></div>
+        <div>
+          <p class="eyebrow">Liquidity Parameter L — Compounding</p>
+          <h2>L grows each time alpha is reinvested into the pool &nbsp;|&nbsp; 🟢 = reinvestment event</h2>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="lGrowthChart"></canvas></div>
+    </div>
+
+    <!-- Trade table -->
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">Event History — Swaps &amp; Reinvestments</p>
+          <h2>V3 swap P&amp;L · 🔄 reinvestment lots · L growth · combined ledger</h2>
+        </div>
         <span id="swapCount" class="count-pill hidden"></span>
       </div>
       <div id="tableWrap"><div class="empty-state"><p>No trades yet.</p></div></div>
     </div>
+
   </section>
 </main>
 <script type="module" src="/app.js"></script>
