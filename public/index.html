@@ -1,285 +1,807 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Uniswap V3 Concentrated Liquidity — NSE AMM</title>
-  <link rel="stylesheet" href="/styles.css"/>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>V3 Pool · Alpha Reinvestment Dashboard</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-family:'Segoe UI',system-ui,sans-serif;font-size:14px}
+body{background:#07111f;color:#e2e8f0;min-height:100vh;display:flex}
+
+/* ── Layout ── */
+.sidebar{width:300px;flex-shrink:0;background:#0d1a2d;border-right:1px solid rgba(148,163,184,.10);
+  display:flex;flex-direction:column;gap:0;overflow-y:auto;height:100vh;position:sticky;top:0}
+.main{flex:1;min-width:0;padding:24px;display:flex;flex-direction:column;gap:20px;overflow:hidden}
+
+/* ── Sidebar sections ── */
+.brand{padding:20px;border-bottom:1px solid rgba(148,163,184,.08)}
+.brand h1{font-size:1.1rem;font-weight:700;color:#38bdf8;margin-bottom:2px}
+.brand p{font-size:.73rem;color:#64748b;line-height:1.5}
+.sb-section{padding:16px;border-bottom:1px solid rgba(148,163,184,.08)}
+.sb-section h3{font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;color:#38bdf8;margin-bottom:12px}
+.field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.field label{font-size:.75rem;color:#94a3b8}
+.field input{background:#0a1525;border:1px solid rgba(148,163,184,.14);color:#e2e8f0;border-radius:8px;
+  padding:7px 10px;font-size:.82rem;width:100%;transition:border-color .2s}
+.field input:focus{outline:none;border-color:#38bdf8}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.upload-btn{display:flex;position:relative;flex-direction:column;align-items:center;justify-content:center;
+  border:1px dashed rgba(56,189,248,.35);border-radius:10px;background:rgba(56,189,248,.04);
+  padding:10px;cursor:pointer;text-align:center;font-size:.76rem;color:#64748b;min-height:52px;transition:.2s}
+.upload-btn:hover{border-color:#38bdf8;color:#e2e8f0}
+.upload-btn input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.upload-btn .fname{font-size:.72rem;color:#38bdf8;margin-top:3px;word-break:break-all}
+.toggle-row{display:flex;align-items:center;gap:8px;font-size:.80rem;color:#94a3b8;margin-bottom:10px;cursor:pointer}
+.toggle-row input{width:15px;height:15px;accent-color:#38bdf8;flex-shrink:0}
+.band-hint{font-size:.73rem;color:#22c55e;margin-top:-6px;margin-bottom:10px;font-weight:600}
+.run-btn{display:block;width:calc(100% - 32px);margin:16px;padding:11px;border:none;border-radius:10px;
+  background:linear-gradient(135deg,#38bdf8,#818cf8);color:#020617;font-weight:700;font-size:.92rem;cursor:pointer;transition:.2s}
+.run-btn:hover{opacity:.9;transform:translateY(-1px)}
+.run-btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
+
+/* ── Status ── */
+.status{border-radius:10px;padding:11px 14px;font-size:.83rem;line-height:1.5;border:1px solid transparent}
+.status-info   {background:rgba(59,130,246,.09);border-color:rgba(59,130,246,.22)}
+.status-ok     {background:rgba(34,197,94,.09); border-color:rgba(34,197,94,.22)}
+.status-warn   {background:rgba(251,191,36,.09);border-color:rgba(251,191,36,.22)}
+.status-err    {background:rgba(239,68,68,.09); border-color:rgba(239,68,68,.22)}
+.status b{color:#f1f5f9}
+.hidden{display:none!important}
+
+/* ── Metric cards ── */
+.metric-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+.mcard{background:#0d1a2d;border:1px solid rgba(148,163,184,.10);border-radius:12px;padding:14px 16px}
+.mcard.hl{border-color:rgba(56,189,248,.30);background:rgba(56,189,248,.04)}
+.mcard.pos-hl{border-color:rgba(34,197,94,.28);background:rgba(34,197,94,.03)}
+.mcard.neg-hl{border-color:rgba(239,68,68,.25);background:rgba(239,68,68,.03)}
+.mlabel{font-size:.70rem;color:#64748b;margin-bottom:6px;line-height:1.3}
+.mvalue{font-size:1.18rem;font-weight:700;line-height:1}
+.mdelta{font-size:.74rem;margin-top:4px}
+.pos{color:#22c55e}.neg{color:#ef4444}.muted{color:#64748b}
+
+/* ── Chart ── */
+.chart-card{background:#0d1a2d;border:1px solid rgba(148,163,184,.10);border-radius:12px;padding:16px}
+.chart-card h2{font-size:.85rem;color:#94a3b8;margin-bottom:12px;font-weight:500}
+.chart-wrap{width:100%;height:240px}
+canvas{display:block;width:100%!important;height:100%!important}
+.chart-legend{display:flex;gap:18px;margin-top:8px}
+.leg{display:flex;align-items:center;gap:6px;font-size:.72rem;color:#64748b}
+.leg-dot{width:20px;height:3px;border-radius:2px;flex-shrink:0}
+
+/* ── Summary panels ── */
+.panel{background:#0d1a2d;border:1px solid rgba(148,163,184,.10);border-radius:12px;padding:16px}
+.panel h2{font-size:.80rem;font-weight:600;color:#94a3b8;letter-spacing:.06em;text-transform:uppercase;margin-bottom:14px}
+.stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.stat{background:#0a1525;border-radius:8px;padding:10px 12px;border:1px solid rgba(148,163,184,.07)}
+.stat-label{font-size:.68rem;color:#64748b;margin-bottom:4px}
+.stat-val{font-size:.92rem;font-weight:700}
+.reinvest-explain{margin-top:12px;font-size:.76rem;color:#94a3b8;line-height:1.6;
+  background:rgba(34,197,94,.05);border:1px solid rgba(34,197,94,.12);border-radius:8px;padding:10px 12px}
+.reinvest-explain b{color:#86efac}
+
+/* ── Share table ── */
+.share-table{width:100%;border-collapse:collapse;margin-top:4px}
+.share-table th{text-align:left;padding:6px 8px;font-size:.68rem;color:#64748b;border-bottom:1px solid rgba(148,163,184,.08)}
+.share-table td{padding:8px 8px;font-size:.78rem;border-bottom:1px solid rgba(148,163,184,.05)}
+.share-table tr:last-child td{border-bottom:none}
+.share-table td:not(:first-child){text-align:right;font-variant-numeric:tabular-nums}
+
+/* ── Trade history ── */
+.trade-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.trade-header h2{font-size:.80rem;font-weight:600;color:#94a3b8;letter-spacing:.06em;text-transform:uppercase;margin:0}
+.pill{background:rgba(129,140,248,.12);color:#c7d2fe;border-radius:999px;padding:3px 10px;font-size:.72rem}
+.dl-btn{border:1px solid rgba(56,189,248,.20);border-radius:8px;padding:5px 10px;background:rgba(56,189,248,.06);
+  color:#e2e8f0;cursor:pointer;font-size:.75rem;font-weight:600;display:flex;align-items:center;gap:4px}
+.tscroll{overflow-x:auto}
+table.trades{width:100%;border-collapse:collapse;min-width:700px}
+table.trades th{text-align:left;padding:6px 8px;font-size:.68rem;color:#64748b;
+  border-bottom:1px solid rgba(148,163,184,.10);white-space:nowrap}
+table.trades td{padding:7px 8px;font-size:.74rem;border-bottom:1px solid rgba(148,163,184,.05);white-space:nowrap}
+table.trades td.r{text-align:right;font-variant-numeric:tabular-nums}
+table.trades .swap-row td{background:transparent}
+table.trades .reinvest-row td{background:rgba(34,197,94,.04)}
+.badge{border-radius:4px;padding:2px 6px;font-size:.65rem;font-weight:700}
+.badge-swap{background:rgba(56,189,248,.14);color:#7dd3fc}
+.badge-reinvest{background:rgba(34,197,94,.14);color:#86efac}
+.note{font-size:.72rem;color:#64748b;margin-bottom:8px}
+@media(max-width:900px){body{flex-direction:column}.sidebar{width:100%;height:auto;position:static}}
+</style>
 </head>
 <body>
-<main class="shell">
-  <aside class="sidebar">
 
-    <div class="brand">
-      <p class="eyebrow">Uniswap V3 Mathematics · NSE Stocks · Real IL · Alpha Reinvestment</p>
-      <h1>V3 Concentrated Pool</h1>
-      <p class="lede">
-        Fixed concentrated liquidity band. Swap deltas from
-        <code>Δx = L·(1/√r_new − 1/√r_old)</code> and <code>Δy = L·(√r_new − √r_old)</code>.
-        Alpha reinvestment compounds L over time — each lot purchased at the
-        current pool ratio re-deploys cash profit back into the pool.
-      </p>
+<!-- ──────────────── SIDEBAR ──────────────── -->
+<aside class="sidebar">
+  <div class="brand">
+    <h1>🏊 V3 Pool Strategy</h1>
+    <p>Concentrated liquidity · Alpha reinvestment<br/>Upload 1-minute NSE CSV data to simulate</p>
+  </div>
+
+  <div class="sb-section">
+    <h3>Assets</h3>
+    <div class="field">
+      <label>Asset 1 Label</label>
+      <input id="label1" type="text" value="Reliance"/>
     </div>
-
-    <!-- ── Datasets ──────────────────────────────────────────────────────── -->
-    <section class="card">
-      <h2>Datasets</h2>
-      <label class="upload">
-        <span id="asset1FileName">Upload Asset 1 — 1-min CSV</span>
-        <input id="asset1File" type="file" accept=".csv,text/csv"/>
-      </label>
-      <label class="field" style="margin-top:6px">Label
-        <input id="asset1Label" type="text" value="Reliance"/>
-      </label>
-      <label class="upload" style="margin-top:8px">
-        <span id="asset2FileName">Upload Asset 2 — 1-min CSV</span>
-        <input id="asset2File" type="file" accept=".csv,text/csv"/>
-      </label>
-      <label class="field" style="margin-top:6px">Label
-        <input id="asset2Label" type="text" value="Kotak Bank"/>
-      </label>
-      <button id="runSimulation" class="btn-primary">▶ Run Simulation</button>
-    </section>
-
-    <!-- ── Capital ───────────────────────────────────────────────────────── -->
-    <section class="card">
-      <h2>Capital</h2>
-      <label class="field">Capital (₹)
-        <input id="realCapital" type="number" min="10000" step="100000" value="2000000"/>
-        <span class="sub-hint">Split via V3 reserves at opening ratio to initialise L</span>
-      </label>
-    </section>
-
-    <!-- ── Concentration Band ────────────────────────────────────────────── -->
-    <section class="card card-blue">
-      <h2>🎯 Concentration Band</h2>
-      <label class="field">Band Half-Width ± (%)
-        <input id="bandPct" type="number" min="1" max="99" step="1" value="20"/>
-      </label>
-      <div id="bandLabel" class="band-info"></div>
-      <div class="info-box" style="margin-top:8px">
-        <strong>Fixed band.</strong> The band stays at ±% around the
-        initialisation price. When price exits the range a recenter fires —
-        L is recomputed from current portfolio value, no brokerage charged.<br/>
-        Formula: concentration = 1 / (1 − √(p_lower/p_upper))
-      </div>
-      <div class="band-table">
-        <div class="bt-row head"><span>Band ±</span><span>Total range</span><span>Amplification</span></div>
-        <div class="bt-row"><span>5%</span><span>10%</span><span>~10.5×</span></div>
-        <div class="bt-row"><span>10%</span><span>20%</span><span>~5.4×</span></div>
-        <div class="bt-row"><span>20%</span><span>40%</span><span>~2.9×</span></div>
-        <div class="bt-row"><span>50%</span><span>100%</span><span>~1.7×</span></div>
-      </div>
-    </section>
-
-    <!-- ── Brokerage ─────────────────────────────────────────────────────── -->
-    <section class="card">
-      <h2>Brokerage</h2>
-      <div class="two-col">
-        <label class="field">Buy (%)
-          <input id="buyBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
-        </label>
-        <label class="field">Sell (%)
-          <input id="sellBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
-        </label>
-      </div>
-      <p class="hint">Each swap executes only when revenue − cost − brokerage &gt; 0.</p>
-    </section>
-
-    <!-- ── Alpha Reinvestment ────────────────────────────────────────────── -->
-    <section class="card card-green">
-      <h2>🔄 Alpha Reinvestment</h2>
-      <label class="checkbox">
-        <input id="reinvestEnabled" type="checkbox" checked/>
-        Enable alpha reinvestment
-      </label>
-      <p class="hint" style="margin-top:6px">
-        When accumulated cash alpha can buy ≥ 1 lot — defined as
-        <strong>1 share Asset1 + round(Y/X) shares Asset2</strong> at the
-        current pool ratio — those shares are purchased and added to the pool.
-        L is recomputed from the new total holdings, compounding fee generation
-        on every future swap.
-      </p>
-      <label class="field" style="margin-top:10px">Reinvestment Brokerage (%)
-        <input id="reinvestBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
-        <span class="sub-hint">Applied on both stock purchases (two buy orders)</span>
-      </label>
-      <div class="protect-flow" style="margin-top:10px">
-        <div class="pf-row">
-          <span class="pf-num">①</span>
-          <span>Cash alpha accumulates from profitable AMM swaps</span>
-        </div>
-        <div class="pf-row">
-          <span class="pf-num">②</span>
-          <span>
-            Lot = 1 share A + <em>round(Y/X)</em> shares B at current ratio.<br/>
-            Example: pool 50 : 150 → lot = 1 A + 3 B
-          </span>
-        </div>
-        <div class="pf-row">
-          <span class="pf-num">③</span>
-          <span>
-            N = floor(cash / lot cost inc. brok). All N lots bought atomically.
-          </span>
-        </div>
-        <div class="pf-row">
-          <span class="pf-num">④</span>
-          <span>
-            xShares += N, yShares += N × round(Y/X). Hold benchmark expands
-            symmetrically — IL invariant preserved at reinvestment instant.
-          </span>
-        </div>
-        <div class="pf-row">
-          <span class="pf-num">⑤</span>
-          <span>
-            L recomputed from new pool capital → higher future fee harvest.
-            <em>Compounds indefinitely while swaps generate alpha.</em>
-          </span>
-        </div>
-      </div>
-      <div class="info-box" style="margin-top:10px">
-        <strong>Accounting note:</strong> The hold benchmark (xHold, yHold) grows
-        with each reinvestment, so IL reflects only AMM-induced divergence, not
-        reinvestment timing. vsHold = totalValue − holdValue is always apples-to-apples.
-      </div>
-    </section>
-
-    <!-- ── IL Stop-Loss ──────────────────────────────────────────────────── -->
-    <section class="card card-red">
-      <h2>🛑 IL Stop-Loss &amp; Auto-Resume</h2>
-      <div class="two-col">
-        <label class="field">Stop at IL (%)
-          <input id="ilStopLossPct" type="number" min="0" max="100" step="0.5" value="0"/>
-          <span class="sub-hint">0 = disabled</span>
-        </label>
-        <label class="field">Resume at IL (%)
-          <input id="ilResumePct" type="number" min="0" max="100" step="0.5" value="0"/>
-          <span class="sub-hint">0 = stay halted</span>
-        </label>
-      </div>
-      <div class="flow-strip">
-        <div class="fs-box run">Active</div><div class="fs-arr">→</div>
-        <div class="fs-box stop">IL &lt; −Stop%</div><div class="fs-arr">→</div>
-        <div class="fs-box wait">Paused</div><div class="fs-arr">→</div>
-        <div class="fs-box go">IL &gt; −Resume%</div><div class="fs-arr">→</div>
-        <div class="fs-box run">Active</div>
-      </div>
-      <p class="hint">Note: reinvestment continues even when swaps are halted —
-        it only deploys idle cash, it does not execute new AMM swaps.</p>
-    </section>
-
-    <!-- ── Alpha Protection ──────────────────────────────────────────────── -->
-    <section class="card card-purple">
-      <h2>🛡️ Alpha-Protection</h2>
-      <label class="checkbox">
-        <input id="alphaProtectEnabled" type="checkbox" checked/>
-        Enable alpha protection
-      </label>
-      <label class="field" style="margin-top:8px">Activate after cash ROI (%)
-        <input id="alphaProtectThresholdPct" type="number" min="0" max="50" step="0.1" value="0.3"/>
-        <span class="sub-hint">0 = protect from hour 1</span>
-      </label>
-      <div class="protect-flow">
-        <div class="pf-row"><span class="pf-num">①</span><span>Cash profit builds until it crosses Activate %</span></div>
-        <div class="pf-row"><span class="pf-num">②</span><span>Watch whether <em>|IL%| ≥ Cash ROI%</em></span></div>
-        <div class="pf-row"><span class="pf-num">③</span><span>If yes → halt swaps. Total value ≈ hold (net zero)</span></div>
-        <div class="pf-row"><span class="pf-num">④</span><span>When IL retreats → resume harvesting</span></div>
-      </div>
-    </section>
-
-    <!-- ── CSV Format ────────────────────────────────────────────────────── -->
-    <section class="card card-flat">
-      <h2>CSV Format</h2>
-      <ul>
-        <li><code>date</code> — <code>2025-01-01 09:15:00+05:30</code></li>
-        <li><code>close</code> — price in ₹</li>
-        <li><code>volume</code> — trade volume</li>
-        <li>1-minute bars merged to hourly automatically</li>
-      </ul>
-    </section>
-
-  </aside><!-- /sidebar -->
-
-  <!-- ── Content ─────────────────────────────────────────────────────────── -->
-  <section class="content">
-
-    <div id="statusBanner" class="status-banner status-info">
-      <strong>INFO:</strong> <span>Upload two 1-minute CSV files and click Run Simulation.</span>
+    <div class="upload-btn">
+      <span>📂 Upload Asset 1 CSV</span>
+      <span id="fname1" class="fname"></span>
+      <input id="file1" type="file" accept=".csv"/>
     </div>
-    <div id="haltBanner" class="halt-banner hidden"></div>
+    <div class="field" style="margin-top:10px">
+      <label>Asset 2 Label</label>
+      <input id="label2" type="text" value="Kotak Bank"/>
+    </div>
+    <div class="upload-btn">
+      <span>📂 Upload Asset 2 CSV</span>
+      <span id="fname2" class="fname"></span>
+      <input id="file2" type="file" accept=".csv"/>
+    </div>
+  </div>
 
-    <!-- Metrics -->
-    <div class="card">
-      <div class="card-head">
-        <div>
-          <p class="eyebrow">Results — Uniswap V3 Concentrated Liquidity + Alpha Reinvestment</p>
-          <h2 id="pairHeading">Reliance  ↔  Kotak Bank</h2>
-        </div>
-        <button id="downloadCsv" class="btn-secondary hidden">⬇ CSV</button>
+  <div class="sb-section">
+    <h3>Capital</h3>
+    <div class="field">
+      <label>Starting Capital (₹)</label>
+      <input id="capital" type="number" min="10000" step="100000" value="2000000"/>
+    </div>
+  </div>
+
+  <div class="sb-section">
+    <h3>Pool Band</h3>
+    <div class="field">
+      <label>Band Width ±%  <span style="color:#64748b;font-size:.68rem">(price range around opening ratio)</span></label>
+      <input id="band" type="number" min="1" max="80" step="1" value="20"/>
+    </div>
+    <div id="bandHint" class="band-hint"></div>
+  </div>
+
+  <div class="sb-section">
+    <h3>Brokerage</h3>
+    <div class="two">
+      <div class="field">
+        <label>Buy %</label>
+        <input id="bbuy" type="number" min="0" max="5" step="0.01" value="0.15"/>
       </div>
-      <div id="metricsGrid" class="metric-grid">
-        <div class="empty-state"><p>Upload CSV files and run.</p></div>
+      <div class="field">
+        <label>Sell %</label>
+        <input id="bsell" type="number" min="0" max="5" step="0.01" value="0.15"/>
       </div>
     </div>
+    <p style="font-size:.71rem;color:#64748b">Trades only execute when profit exceeds brokerage on both legs.</p>
+  </div>
 
-    <!-- Performance -->
-    <div class="card">
-      <div class="card-head">
-        <div>
-          <p class="eyebrow">Performance Summary</p>
-          <h2>Harvest · Risk · Quality · V3 Concentration · 🔄 Reinvestment</h2>
-        </div>
-      </div>
-      <div id="perfPanel"><div class="empty-state"><p>Run simulation first.</p></div></div>
+  <div class="sb-section">
+    <h3>Alpha Reinvestment</h3>
+    <label class="toggle-row">
+      <input id="reinvest" type="checkbox" checked/>
+      Reinvest trading profits into pool
+    </label>
+    <div class="field">
+      <label>Reinvestment Brokerage %</label>
+      <input id="breinv" type="number" min="0" max="5" step="0.01" value="0.15"/>
     </div>
+    <p style="font-size:.71rem;color:#64748b;line-height:1.55">
+      When cash profit can buy 1 share of A + proportional shares of B,
+      those shares are added to the pool automatically.
+    </p>
+  </div>
 
-    <!-- Equity chart -->
-    <div class="card">
-      <div class="card-head">
-        <div>
-          <p class="eyebrow">Portfolio Value</p>
-          <h2>AMM Total · Hold · Cash Profit &nbsp;|&nbsp; 🟡 swap &nbsp; 🟢 reinvest &nbsp; 🔴 halted</h2>
-        </div>
-      </div>
-      <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
+  <button class="run-btn" id="runBtn">▶ Run Simulation</button>
+</aside>
+
+<!-- ──────────────── MAIN ──────────────── -->
+<main class="main">
+  <div id="status" class="status status-info">
+    <b>Welcome.</b> Upload two 1-minute OHLCV CSV files (columns: date, close, volume) and click Run Simulation.
+  </div>
+
+  <!-- metrics -->
+  <div id="metricRow" class="metric-row hidden"></div>
+
+  <!-- chart -->
+  <div id="chartCard" class="chart-card hidden">
+    <h2>Portfolio Value Over Time</h2>
+    <div class="chart-wrap"><canvas id="chart"></canvas></div>
+    <div class="chart-legend">
+      <div class="leg"><div class="leg-dot" style="background:#38bdf8"></div> Pool Total (assets + cash)</div>
+      <div class="leg"><div class="leg-dot" style="background:#818cf8;opacity:.6"></div> Buy &amp; Hold</div>
+      <div class="leg"><div class="leg-dot" style="background:#22c55e"></div> 🔄 Reinvestment events</div>
     </div>
+  </div>
 
-    <!-- Alpha / IL chart -->
-    <div class="card">
-      <div class="card-head">
-        <div>
-          <p class="eyebrow">Net Alpha &amp; IL</p>
-          <h2>Alpha ₹ · IL% (scaled) &nbsp;|&nbsp; 🟢 green bar = reinvestment event</h2>
-        </div>
+  <!-- reinvest summary -->
+  <div id="reinvestPanel" class="panel hidden">
+    <h2>🔄 Reinvestment Results</h2>
+    <div id="reinvestStats" class="stat-row"></div>
+    <div id="reinvestExplain" class="reinvest-explain"></div>
+  </div>
+
+  <!-- share position -->
+  <div id="sharePanel" class="panel hidden">
+    <h2>📊 Share Position Summary</h2>
+    <table class="share-table" id="shareTable">
+      <thead><tr><th>Asset</th><th>Started With</th><th>Via Reinvest</th><th>Final Count</th><th>Start Value</th><th>Final Value</th><th>Change</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p style="font-size:.72rem;color:#64748b;margin-top:10px">
+      ⚠️ The pool rebalances between assets as prices move — this is Impermanent Loss (IL).
+      Final share counts depend on the price path, but <b>Total Value = Pool Assets + Cash Collected</b>.
+    </p>
+  </div>
+
+  <!-- trade history -->
+  <div id="histPanel" class="panel hidden">
+    <div class="trade-header">
+      <h2>📋 Trade &amp; Reinvestment History</h2>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="evtPill" class="pill"></span>
+        <button class="dl-btn" id="dlBtn">⬇ CSV</button>
       </div>
-      <div class="chart-wrap"><canvas id="alphaChart"></canvas></div>
     </div>
-
-    <!-- L-growth chart -->
-    <div class="card">
-      <div class="card-head">
-        <div>
-          <p class="eyebrow">Liquidity Parameter L — Compounding</p>
-          <h2>L grows each time alpha is reinvested into the pool &nbsp;|&nbsp; 🟢 = reinvestment event</h2>
-        </div>
-      </div>
-      <div class="chart-wrap"><canvas id="lGrowthChart"></canvas></div>
+    <p id="histNote" class="note"></p>
+    <div class="tscroll">
+      <table class="trades" id="histTable">
+        <thead><tr>
+          <th>Date &amp; Time</th><th>Type</th><th>Action</th>
+          <th class="r">Qty</th><th class="r">Trade Profit ₹</th><th class="r">Cash Balance ₹</th>
+          <th class="r">A Shares</th><th class="r">B Shares</th>
+        </tr></thead>
+        <tbody id="histBody"></tbody>
+      </table>
     </div>
-
-    <!-- Trade table -->
-    <div class="card">
-      <div class="card-head">
-        <div>
-          <p class="eyebrow">Event History — Swaps &amp; Reinvestments</p>
-          <h2>V3 swap P&amp;L · 🔄 reinvestment lots · L growth · combined ledger</h2>
-        </div>
-        <span id="swapCount" class="count-pill hidden"></span>
-      </div>
-      <div id="tableWrap"><div class="empty-state"><p>No trades yet.</p></div></div>
-    </div>
-
-  </section>
+  </div>
 </main>
-<script type="module" src="/app.js"></script>
+
+<script type="module">
+// ═══════════════════════════════════════════════════════════════════
+// UTILITY
+// ═══════════════════════════════════════════════════════════════════
+const $ = id => document.getElementById(id);
+const clamp = (v,lo,hi) => Math.min(hi, Math.max(lo, v));
+const inr = v => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(v);
+const inr2 = v => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',minimumFractionDigits:2,maximumFractionDigits:2}).format(v);
+const pct = (v,d=2) => `${v>=0?'+':''}${(+v).toFixed(d)}%`;
+const qty = v => Math.round(v).toLocaleString('en-IN');
+const fmtDate = s => new Date(s).toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+
+// ═══════════════════════════════════════════════════════════════════
+// CSV PARSING  (robust: quoted fields, comma-in-value, IST timezone)
+// ═══════════════════════════════════════════════════════════════════
+function parseCsvLine(line) {
+  const cells = []; let cur = '', q = false;
+  for (const c of line) {
+    if (c === '"') { q = !q; continue; }
+    if (c === ',' && !q) { cells.push(cur.trim()); cur = ''; continue; }
+    cur += c;
+  }
+  cells.push(cur.trim());
+  return cells;
+}
+function parseCsv(text) {
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return [];
+  const hdrs = parseCsvLine(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g,''));
+  return lines.slice(1).map(l => {
+    const cells = parseCsvLine(l);
+    return hdrs.reduce((o,h,i) => { o[h] = cells[i] ?? ''; return o; }, {});
+  });
+}
+function normalizeRows(rows) {
+  return rows
+    .map(r => ({ date: new Date(r.date ?? r.datetime ?? r.time ?? ''), close: +(r.close ?? r.ltp ?? 0) }))
+    .filter(r => !isNaN(r.date) && r.close > 0)
+    .sort((a,b) => a.date - b.date);
+}
+
+// Bucket by hour, take last close in each hour for each asset independently.
+// This is robust: the two assets don't need identical minute-level timestamps.
+function buildHourly(a1, a2) {
+  const bucket = arr => {
+    const m = new Map();
+    for (const r of arr) {
+      const h = new Date(r.date); h.setMinutes(0,0,0);
+      m.set(h.toISOString(), r.close); // last minute in hour wins
+    }
+    return m;
+  };
+  const b1 = bucket(a1), b2 = bucket(a2);
+  const result = [];
+  for (const [key, c1] of b1) {
+    if (b2.has(key)) result.push({ date: new Date(key), c1, c2: b2.get(key) });
+  }
+  return result.sort((a,b) => a.date - b.date);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// UNISWAP V3 CORE MATH
+// ═══════════════════════════════════════════════════════════════════
+// Liquidity parameter L from capital, prices, and range
+function computeL(cap, p1, p2, r, rL, rH) {
+  const sr  = Math.sqrt(clamp(r, rL, rH));
+  const sra = Math.sqrt(rL), srb = Math.sqrt(rH);
+  const d   = (1/sr - 1/srb)*p1 + (sr - sra)*p2;
+  return d > 1e-10 ? cap/d : 0;
+}
+// Virtual reserves at price ratio r within band [rL, rH]
+function v3Reserves(L, r, rL, rH) {
+  const sr  = Math.sqrt(clamp(r, rL, rH));
+  const sra = Math.sqrt(rL), srb = Math.sqrt(rH);
+  return { x: L*(1/sr - 1/srb), y: L*(sr - sra) };
+}
+// Swap delta when ratio moves r0 → r1 (both within band)
+function v3Delta(L, r0, r1) {
+  return {
+    dx: L*(1/Math.sqrt(r1) - 1/Math.sqrt(r0)), // Asset1 change
+    dy: L*(Math.sqrt(r1)   -   Math.sqrt(r0))  // Asset2 change
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SIMULATION  (clean — no stop-loss, no alpha-protect, no halts)
+// ═══════════════════════════════════════════════════════════════════
+function runSimulation(rows1, rows2, capital, cfg) {
+  const a1 = normalizeRows(rows1);
+  const a2 = normalizeRows(rows2);
+  if (!a1.length || !a2.length) return { err:'CSV files have no usable rows (need date + close columns).' };
+
+  const hourly = buildHourly(a1, a2);
+  if (hourly.length < 2) return { err:'No overlapping hourly data found. Check both CSVs span the same date range.' };
+
+  // Config
+  const band    = clamp(+(cfg.band   ?? 20),   0.5, 99) / 100;
+  const bBuy    = clamp(+(cfg.bBuy   ?? 0.15), 0,   5)  / 100;
+  const bSell   = clamp(+(cfg.bSell  ?? 0.15), 0,   5)  / 100;
+  const bReinv  = clamp(+(cfg.bReinv ?? 0.15), 0,   5)  / 100;
+  const doReinv = cfg.reinvest !== false;
+
+  // ── Initialise pool at first hourly bar ──────────────────────────
+  const { c1:p1_0, c2:p2_0 } = hourly[0];
+  let rC = p1_0 / p2_0;               // centre ratio
+  let rL = rC*(1-band), rH = rC*(1+band);
+
+  let L = computeL(capital, p1_0, p2_0, rC, rL, rH);
+  if (L <= 0) return { err:'Band too narrow or capital too low — liquidity parameter is zero.' };
+
+  const r0 = v3Reserves(L, rC, rL, rH);
+  let xS = Math.max(1, Math.round(r0.x)); // Asset1 shares in pool (live)
+  let yS = Math.max(1, Math.round(r0.y)); // Asset2 shares in pool (live)
+
+  // Hold benchmark — fixed at opening position, never changes
+  const x0 = xS, y0 = yS;
+  const startCap = x0*p1_0 + y0*p2_0;
+
+  // Running state
+  let rPrev = rC;
+  let cash  = 0;           // cumulative net swap profit sitting as cash
+  let totBrok = 0, grossFees = 0;
+  let swapCount = 0, recenterCount = 0;
+  let reinvestCount = 0, xAdded = 0, yAdded = 0, reinvestedCap = 0;
+
+  const swaps = [], reinvests = [], curve = [];
+
+  curve.push({ date:hourly[0].date.toISOString(), pool:startCap, hold:startCap, cash:0 });
+
+  // ── Main loop: one iteration per hourly bar ──────────────────────
+  for (let i = 1; i < hourly.length; i++) {
+    const { date, c1:p1, c2:p2 } = hourly[i];
+    const rNew = p1 / p2;
+
+    // ── 1. RECENTER if price exited band ──
+    if (rNew < rL || rNew > rH) {
+      // Preserve total pool value; recompute L at new centre; no brokerage
+      const poolCap = xS*p1 + yS*p2;
+      rC = rNew;
+      rL = rC*(1-band); rH = rC*(1+band);
+      L = computeL(poolCap, p1, p2, rC, rL, rH);
+      if (L > 0) {
+        const nr = v3Reserves(L, rC, rL, rH);
+        xS = Math.max(0, Math.round(nr.x));
+        yS = Math.max(0, Math.round(nr.y));
+      }
+      rPrev = rC;   // next swap computes delta from new centre
+      recenterCount++;
+
+    } else {
+      // ── 2. SWAP — execute V3 arbitrage if profitable ──
+      const { dx, dy } = v3Delta(L, rPrev, rNew);
+      const absDx = Math.abs(dx), absDy = Math.abs(dy);
+      // Only execute if both sides are ≥ 0.5 shares (round to integer NSE qty)
+      const dxI = absDx >= 0.5 ? Math.round(absDx) : 0;
+      const dyI = absDy >= 0.5 ? Math.round(absDy) : 0;
+
+      if (dxI >= 1 && dyI >= 1) {
+        if (dx < 0 && xS > 1) {
+          // Ratio rose → pool releases A1, absorbs A2
+          // Action: Sell A1, Buy A2
+          const sell = Math.min(dxI, xS-1);   // never sell the last share
+          if (sell >= 1) {
+            const cost = dyI*p2, rev = sell*p1;
+            const brok = bBuy*cost + bSell*rev;
+            const net  = rev - cost - brok;
+            if (net > 0) {                     // only trade when profitable
+              xS -= sell; yS += dyI;
+              cash += net; totBrok += brok; grossFees += (rev-cost); swapCount++;
+              swaps.push({ date:date.toISOString(),
+                sell, sellA:1, buy:dyI, buyA:2,
+                net, cash, brok, p1, p2, xS, yS });
+            }
+          }
+        } else if (dx > 0 && yS > 1) {
+          // Ratio fell → pool releases A2, absorbs A1
+          // Action: Sell A2, Buy A1
+          const sell = Math.min(dyI, yS-1);
+          if (sell >= 1) {
+            const cost = dxI*p1, rev = sell*p2;
+            const brok = bBuy*cost + bSell*rev;
+            const net  = rev - cost - brok;
+            if (net > 0) {
+              xS += dxI; yS -= sell;
+              cash += net; totBrok += brok; grossFees += (rev-cost); swapCount++;
+              swaps.push({ date:date.toISOString(),
+                sell, sellA:2, buy:dxI, buyA:1,
+                net, cash, brok, p1, p2, xS, yS });
+            }
+          }
+        }
+      }
+      rPrev = rNew;
+    }
+
+    // ── 3. REINVEST — buy shares at current pool ratio when cash allows ──
+    if (doReinv && cash > 0 && xS > 0 && yS > 0) {
+      // One lot = 1 share A1 + round(yS/xS) shares A2
+      const ratio  = Math.max(1, Math.round(yS / xS));
+      const rawLot = p1 + ratio*p2;             // market cost of one lot
+      const lotCost = rawLot*(1 + bReinv);      // total cost with brokerage
+
+      if (cash >= lotCost) {
+        const n    = Math.floor(cash / lotCost); // how many lots we can afford
+        const addX = n;
+        const addY = n*ratio;
+        const raw  = addX*p1 + addY*p2;
+        const brok = bReinv*raw;
+        const spent = raw + brok;
+
+        if (cash >= spent && addX >= 1 && addY >= 1) {
+          xS += addX; yS += addY;
+          xAdded += addX; yAdded += addY;
+          cash -= spent; totBrok += brok; reinvestedCap += raw; reinvestCount++;
+
+          // Recompute L from new pool holdings (clamp ratio to band)
+          const rCur = clamp(rNew, rL, rH);
+          L = computeL(xS*p1 + yS*p2, p1, p2, rCur, rL, rH);
+
+          reinvests.push({ date:date.toISOString(), addX, addY, ratio,
+            raw, brok, spent, cash, xS, yS, p1, p2, n });
+        }
+      }
+    }
+
+    // ── 4. Equity snapshot ──
+    const poolAssets = xS*p1 + yS*p2;
+    const holdVal    = x0*p1 + y0*p2;
+    curve.push({ date:date.toISOString(), pool:poolAssets+cash, hold:holdVal, cash });
+  }
+
+  // ── Final numbers ──────────────────────────────────────────────
+  const { c1:pF1, c2:pF2 } = hourly.at(-1);
+  const finalPool  = xS*pF1 + yS*pF2;
+  const finalHold  = x0*pF1 + y0*pF2;
+  const totalVal   = finalPool + cash;
+  const il         = finalPool - finalHold;  // negative = impermanent loss
+  const alpha      = totalVal  - finalHold;  // net gain vs hold
+
+  return {
+    swaps, reinvests, curve,
+    r: {
+      startCap, totalVal, finalHold, finalPool, cash,
+      grossFees, totBrok, il, alpha,
+      totalRoi:  startCap > 0 ? (totalVal/startCap-1)*100 : 0,
+      holdRoi:   startCap > 0 ? (finalHold/startCap-1)*100 : 0,
+      alphaRoi:  finalHold > 0 ? alpha/finalHold*100 : 0,
+      ilPct:     finalHold > 0 ? il/finalHold*100 : 0,
+      swapCount, recenterCount, reinvestCount,
+      xAdded, yAdded, reinvestedCap,
+      x0, y0, xF:xS, yF:yS,
+      p1F:pF1, p2F:pF2, p1_0, p2_0,
+      hours: hourly.length,
+    }
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// CHART
+// ═══════════════════════════════════════════════════════════════════
+function drawChart(canvas, curve, reinvests) {
+  if (!curve.length) return;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width  = rect.width  * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+  const P = { t:20, r:10, b:36, l:80 };
+  const cW = W-P.l-P.r, cH = H-P.t-P.b;
+
+  // Subsample for perf
+  const step = Math.max(1, Math.floor(curve.length/500));
+  const pts  = curve.filter((_,i) => i%step===0);
+
+  let yMin = Infinity, yMax = -Infinity;
+  for (const p of pts) {
+    if (p.pool < yMin) yMin = p.pool;
+    if (p.hold < yMin) yMin = p.hold;
+    if (p.pool > yMax) yMax = p.pool;
+    if (p.hold > yMax) yMax = p.hold;
+  }
+  if (yMin === yMax) { yMin -= 1; yMax += 1; }
+  const pad = (yMax-yMin)*0.06; yMin -= pad; yMax += pad;
+
+  const toX = i => P.l + (i/(pts.length-1||1))*cW;
+  const toY = v => P.t + cH - ((v-yMin)/(yMax-yMin))*cH;
+
+  ctx.clearRect(0,0,W,H);
+
+  // Grid lines
+  for (let g=0;g<=4;g++) {
+    const yv = yMin + (g/4)*(yMax-yMin);
+    const yp = toY(yv);
+    ctx.strokeStyle = 'rgba(148,163,184,.07)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(P.l,yp); ctx.lineTo(P.l+cW,yp); ctx.stroke();
+    ctx.fillStyle='rgba(148,163,184,.55)'; ctx.font='9px system-ui';
+    ctx.textAlign='right';
+    const lbl = Math.abs(yMax-yMin)>1e5
+      ? `₹${(yv/1e5).toFixed(1)}L`
+      : `₹${(yv/1e3).toFixed(0)}K`;
+    ctx.fillText(lbl, P.l-4, yp+3);
+  }
+
+  // X axis dates
+  for (let i=0;i<=4;i++) {
+    const idx = Math.round((i/4)*(pts.length-1));
+    const d   = new Date(pts[idx].date);
+    ctx.fillStyle='rgba(148,163,184,.5)'; ctx.font='9px system-ui'; ctx.textAlign='center';
+    ctx.fillText(d.toLocaleDateString('en-IN',{day:'numeric',month:'short'}), toX(idx), H-P.b+13);
+  }
+
+  // Reinvestment event marks (green vertical lines)
+  const reinvestSet = new Set(reinvests.map(r => r.date.substring(0,13)));
+  pts.forEach((p,i) => {
+    if (reinvestSet.has(p.date.substring(0,13))) {
+      ctx.fillStyle = 'rgba(34,197,94,.45)';
+      ctx.fillRect(toX(i)-1, P.t, 2, cH);
+    }
+  });
+
+  // Hold line (purple, dashed)
+  ctx.beginPath(); ctx.setLineDash([5,4]); ctx.strokeStyle='rgba(129,140,248,.55)'; ctx.lineWidth=1.5;
+  pts.forEach((p,i) => { i===0?ctx.moveTo(toX(i),toY(p.hold)):ctx.lineTo(toX(i),toY(p.hold)); });
+  ctx.stroke(); ctx.setLineDash([]);
+
+  // Pool line (cyan solid)
+  ctx.beginPath(); ctx.strokeStyle='#38bdf8'; ctx.lineWidth=2; ctx.lineJoin='round';
+  pts.forEach((p,i) => { i===0?ctx.moveTo(toX(i),toY(p.pool)):ctx.lineTo(toX(i),toY(p.pool)); });
+  ctx.stroke();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// UI RENDERING
+// ═══════════════════════════════════════════════════════════════════
+let _state = { swaps:[], reinvests:[], curve:[], r:null };
+
+function renderMetrics(r, label1, label2) {
+  const mRow = $('metricRow');
+  const mkCard = (label, value, delta, klass='') => `
+    <div class="mcard ${klass}">
+      <div class="mlabel">${label}</div>
+      <div class="mvalue">${value}</div>
+      ${delta!=null?`<div class="mdelta">${delta}</div>`:''}
+    </div>`;
+
+  mRow.innerHTML = [
+    mkCard('Starting Capital', inr(r.startCap), null),
+    mkCard('Pool Total Value', inr(r.totalVal),
+      `<span class="${r.totalRoi>=0?'pos':'neg'}">${pct(r.totalRoi)} vs opening capital</span>`,
+      r.totalVal>=r.startCap?'pos-hl':'neg-hl'),
+    mkCard('Buy &amp; Hold Value', inr(r.finalHold),
+      `<span class="${r.holdRoi>=0?'pos':'neg'}">${pct(r.holdRoi)} vs opening capital</span>`),
+    mkCard('Pool Alpha vs Hold', inr(r.alpha),
+      `<span class="${r.alpha>=0?'pos':'neg'}">${pct(r.alphaRoi)} over hold value</span>`,
+      r.alpha>=0?'pos-hl hl':'neg-hl'),
+    mkCard('Cash Collected', inr(r.cash),
+      `<span class="muted">From ${r.swapCount.toLocaleString('en-IN')} profitable trades</span>`),
+    mkCard('Impermanent Loss', inr(r.il),
+      `<span class="${r.ilPct>=0?'pos':'neg'}">${pct(r.ilPct,3)} of hold value</span>`,
+      r.il<0?'neg-hl':'pos-hl'),
+  ].join('');
+
+  mRow.classList.remove('hidden');
+}
+
+function renderReinvestPanel(r, label1, label2) {
+  const panel = $('reinvestPanel');
+  if (r.reinvestCount === 0) { panel.classList.add('hidden'); return; }
+
+  $('reinvestStats').innerHTML = [
+    `<div class="stat"><div class="stat-label">Reinvestment Events</div><div class="stat-val pos">${r.reinvestCount}×</div></div>`,
+    `<div class="stat"><div class="stat-label">${label1} Shares Added</div><div class="stat-val pos">+${qty(r.xAdded)}</div></div>`,
+    `<div class="stat"><div class="stat-label">${label2} Shares Added</div><div class="stat-val pos">+${qty(r.yAdded)}</div></div>`,
+    `<div class="stat"><div class="stat-label">Capital Reinvested</div><div class="stat-val">${inr(r.reinvestedCap)}</div></div>`,
+  ].join('');
+
+  $('reinvestExplain').innerHTML =
+    `Trading profits were used to buy back <b>+${qty(r.xAdded)} ${label1}</b> and ` +
+    `<b>+${qty(r.yAdded)} ${label2}</b> shares across <b>${r.reinvestCount} events</b>, ` +
+    `re-deploying <b>${inr(r.reinvestedCap)}</b> of alpha directly into the pool. ` +
+    `Each reinvestment recomputes the pool's liquidity depth (L), making every future ` +
+    `trade slightly more profitable — a compounding effect.`;
+
+  panel.classList.remove('hidden');
+}
+
+function renderSharePanel(r, label1, label2) {
+  const tbody = $('shareTable').querySelector('tbody');
+  const row = (label, x0, xAdded, xF, p0, pF) => {
+    const startVal = x0*p0, finalVal = xF*pF;
+    const chg = finalVal - startVal;
+    return `<tr>
+      <td><b>${label}</b></td>
+      <td>${qty(x0)}</td>
+      <td class="pos">+${qty(xAdded)}</td>
+      <td><b>${qty(xF)}</b></td>
+      <td>${inr(startVal)}</td>
+      <td><b>${inr(finalVal)}</b></td>
+      <td class="${chg>=0?'pos':'neg'}">${chg>=0?'+':''}${inr(chg)}</td>
+    </tr>`;
+  };
+  tbody.innerHTML =
+    row(label1, r.x0, r.xAdded, r.xF, r.p1_0, r.p1F) +
+    row(label2, r.y0, r.yAdded, r.yF, r.p2_0, r.p2F);
+  $('sharePanel').classList.remove('hidden');
+}
+
+function renderHistory(swaps, reinvests, label1, label2) {
+  // Merge and sort chronologically
+  const events = [
+    ...swaps.map(s => ({ ...s, type:'swap' })),
+    ...reinvests.map(r => ({ ...r, type:'reinvest' })),
+  ].sort((a,b) => a.date.localeCompare(b.date));
+
+  $('evtPill').textContent = `${events.length} events`;
+  const total = events.length;
+  const show  = events.slice(-300);
+  $('histNote').textContent = total>300 ? `Showing last 300 of ${total} events. Download CSV for full history.` : '';
+
+  const tbody = $('histBody');
+  tbody.innerHTML = show.map(e => {
+    if (e.type === 'swap') {
+      const a1 = e.sellA===1?label1:label2, a2 = e.buyA===1?label1:label2;
+      return `<tr class="swap-row">
+        <td>${fmtDate(e.date)}</td>
+        <td><span class="badge badge-swap">SWAP</span></td>
+        <td>Sell ${a1} → Buy ${a2}</td>
+        <td class="r">−${qty(e.sell)} / +${qty(e.buy)}</td>
+        <td class="r pos">${inr2(e.net)}</td>
+        <td class="r">${inr(e.cash)}</td>
+        <td class="r">${qty(e.xS)}</td>
+        <td class="r">${qty(e.yS)}</td>
+      </tr>`;
+    } else {
+      return `<tr class="reinvest-row">
+        <td>${fmtDate(e.date)}</td>
+        <td><span class="badge badge-reinvest">REINVEST</span></td>
+        <td>Buy ${qty(e.addX)} ${label1} + ${qty(e.addY)} ${label2} (ratio 1:${e.ratio})</td>
+        <td class="r">+${qty(e.addX)} / +${qty(e.addY)}</td>
+        <td class="r muted">${inr2(-e.spent)}</td>
+        <td class="r">${inr(e.cash)}</td>
+        <td class="r pos">${qty(e.xS)}</td>
+        <td class="r pos">${qty(e.yS)}</td>
+      </tr>`;
+    }
+  }).join('');
+
+  $('histPanel').classList.remove('hidden');
+}
+
+function setStatus(type, html) {
+  const el = $('status');
+  el.className = `status status-${type}`;
+  el.innerHTML = html;
+}
+
+// ── Band hint ──────────────────────────────────────────────────────
+function updateBandHint() {
+  const b = +($('band').value || 20) / 100;
+  const cf = 1/(1 - Math.sqrt((1-b)/(1+b)));
+  $('bandHint').textContent = `±${(b*100).toFixed(0)}% range · ${cf.toFixed(1)}× amplification vs full-range pool`;
+}
+$('band').addEventListener('input', updateBandHint);
+updateBandHint();
+
+// ── File labels ───────────────────────────────────────────────────
+$('file1').addEventListener('change', () => { $('fname1').textContent = $('file1').files[0]?.name || ''; });
+$('file2').addEventListener('change', () => { $('fname2').textContent = $('file2').files[0]?.name || ''; });
+
+// ── Download CSV ──────────────────────────────────────────────────
+$('dlBtn').addEventListener('click', () => {
+  const { swaps, reinvests, r } = _state;
+  if (!r) return;
+  const hdr = 'Type,Date,Action,SellQty,BuyQty,NetPnL,CashBalance,A1Shares,A2Shares,A1Price,A2Price';
+  const lines = [hdr,
+    ...swaps.map(s=>[
+      'SWAP', s.date,
+      `"Sell ${s.sellA===1?'A1':'A2'} / Buy ${s.buyA===1?'A1':'A2'}"`,
+      s.sell, s.buy, s.net.toFixed(2), s.cash.toFixed(2), s.xS, s.yS, s.p1, s.p2
+    ].join(',')),
+    ...reinvests.map(rv=>[
+      'REINVEST', rv.date,
+      `"Buy ${rv.addX} A1 + ${rv.addY} A2"`,
+      0, rv.addX+rv.addY, (-rv.spent).toFixed(2), rv.cash.toFixed(2), rv.xS, rv.yS, rv.p1, rv.p2
+    ].join(','))
+  ];
+  const blob = new Blob([lines.join('\n')], { type:'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  Object.assign(document.createElement('a'), { href:url, download:'v3pool_trades.csv' }).click();
+  URL.revokeObjectURL(url);
+});
+
+// ── Run ───────────────────────────────────────────────────────────
+$('runBtn').addEventListener('click', async () => {
+  const f1 = $('file1').files[0], f2 = $('file2').files[0];
+  if (!f1 || !f2) { setStatus('err','<b>Error:</b> Please upload both CSV files first.'); return; }
+
+  $('runBtn').disabled = true; $('runBtn').textContent = '⏳ Simulating…';
+  setStatus('info','<b>Running…</b> Parsing CSVs and computing hourly V3 swap events.');
+  ['metricRow','chartCard','reinvestPanel','sharePanel','histPanel'].forEach(id => $(id).classList.add('hidden'));
+
+  await new Promise(r => setTimeout(r, 10));  // let browser paint
+
+  try {
+    const [t1, t2] = await Promise.all([f1.text(), f2.text()]);
+    const rows1 = parseCsv(t1), rows2 = parseCsv(t2);
+    const label1 = $('label1').value || 'Asset 1';
+    const label2 = $('label2').value || 'Asset 2';
+
+    const result = runSimulation(rows1, rows2, +$('capital').value, {
+      band:   +$('band').value,
+      bBuy:   +$('bbuy').value,
+      bSell:  +$('bsell').value,
+      bReinv: +$('breinv').value,
+      reinvest: $('reinvest').checked,
+    });
+
+    if (result.err) { setStatus('err', `<b>Error:</b> ${result.err}`); return; }
+
+    _state = result;
+    const { swaps, reinvests, curve, r } = result;
+
+    // Status bar
+    const beat = r.alpha >= 0;
+    setStatus(beat ? 'ok' : 'warn',
+      `<b>${beat ? '✅ Pool beats hold' : '⚠️ Pool behind hold'}</b> by ${inr(Math.abs(r.alpha))} ` +
+      `(${pct(r.alphaRoi,2)}).  Cash collected: ${inr(r.cash)}.  ` +
+      `IL: ${inr(r.il)} (${pct(r.ilPct,3)}).  ` +
+      `${r.swapCount} trades · ${r.reinvestCount} reinvestments · ${r.recenterCount} recenters · ` +
+      `${r.hours} hourly bars.`);
+
+    renderMetrics(r, label1, label2);
+    renderReinvestPanel(r, label1, label2);
+    renderSharePanel(r, label1, label2);
+    renderHistory(swaps, reinvests, label1, label2);
+
+    // Chart (after layout paint)
+    $('chartCard').classList.remove('hidden');
+    requestAnimationFrame(() => drawChart($('chart'), curve, reinvests));
+
+  } catch(err) {
+    setStatus('err', `<b>Error:</b> ${err.message}`);
+  } finally {
+    $('runBtn').disabled = false; $('runBtn').textContent = '▶ Run Simulation';
+  }
+});
+</script>
 </body>
 </html>
