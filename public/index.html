@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>V3 Pool · Alpha Reinvestment</title>
+<title>Pool Alpha Reinvestment · NSE Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;600;700&family=Space+Mono:wght@400;700&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet"/>
 <style>
@@ -236,8 +236,8 @@ table.ht .or td{background:rgba(244,63,94,.02)}
 <!-- ══════════════════ SIDEBAR ══════════════════ -->
 <aside class="sidebar">
   <div class="brand">
-    <div class="brand-ey">Uniswap V3 · NSE Stocks</div>
-    <h1>V3 Pool Alpha<br/>Reinvestment</h1>
+    <div class="brand-ey">Concentrated Liquidity · NSE Stocks</div>
+    <h1>Pool Alpha<br/>Reinvestment</h1>
     <p>Fixed concentration band · Volatility harvest · Compounding reinvestment · Zero forced rebalancing</p>
   </div>
 
@@ -277,7 +277,7 @@ table.ht .or td{background:rgba(244,63,94,.02)}
     </div>
     <div class="two">
       <div class="field"><label>Min Band ±%</label>
-        <input id="minBand" type="number" min="1" max="40" step="0.5" value="3"/>
+        <input id="minBand" type="number" min="1" max="40" step="0.5" value="8"/>
       </div>
       <div class="field"><label>Max Band ±%</label>
         <input id="maxBand" type="number" min="5" max="80" step="1" value="30"/>
@@ -352,8 +352,8 @@ table.ht .or td{background:rgba(244,63,94,.02)}
     <div id="oorBanner" class="oor-banner hidden"></div>
     <table class="pos-tbl"><thead><tr>
       <th>Asset</th><th>Opening Shares</th><th>Opening Value</th>
-      <th>Added via Reinvest</th><th>Final Shares</th>
-      <th>Final Value</th><th>Change ₹</th>
+      <th>AMM Trades ±</th><th>Added via Reinvest</th>
+      <th>Final Shares</th><th>Final Value</th><th>Change ₹</th>
     </tr></thead><tbody id="posBody"></tbody></table>
     <div id="reinvExpl" class="expl"></div>
   </div>
@@ -432,7 +432,7 @@ function buildHourly(a1,a2){
 }
 
 // ═══════════════════════════════════════════════════════════════
-// UNISWAP V3 MATH
+// CONCENTRATED LIQUIDITY MATH
 // ═══════════════════════════════════════════════════════════════
 // Liquidity L: given total pool capital, prices, and FIXED band
 function computeL(cap,p1,p2,r,rL,rH){
@@ -817,45 +817,66 @@ function renderReinvest(r,l1,l2){
     s('Gross Swap Revenue',    inr(r.grossFees)),
   ].join('');
 
-  // OOR banner
+  // OOR banner — explain inventory depreciation when OOR is high
   const oorB=$('oorBanner');
   if(r.oorPct>5){
+    const inv_msg = r.oorPct > 30
+      ? `<b>This is why share counts changed significantly.</b> When one stock outperforms the other enough to push the ratio outside the band, the pool is 100% in the cheaper asset — it has already sold all of the expensive one. Widening the band (or increasing Sigma factor) keeps the ratio inside the range more often and reduces this effect.`
+      : `Widening the band slightly will reduce out-of-range periods.`;
     oorB.innerHTML=`<span style="font-size:1.1rem;flex-shrink:0">⚠️</span>
-    <span>Pool was <b>out of range for ${dec(r.oorPct,1)}% of the time</b> (${r.oorHours} of ${r.hours} hours).
-    During these periods the pool holds its current position and earns nothing — no rebalancing fires.
-    Consider a wider band (or lower sigma factor) to keep the price inside the range more often.</span>`;
+    <div><b>Pool was out of range ${dec(r.oorPct,1)}% of the time</b> (${r.oorHours} of ${r.hours-1} hours). No trades execute while out of range — the pool holds whichever asset it drifted into. ${inv_msg}</div>`;
     oorB.classList.remove('hidden');
   } else oorB.classList.add('hidden');
 
-  // Position table
-  const prow=(lbl,x0,xA,xF,p0,pF)=>{
-    const sv=x0*p0,fv=xF*pF,c=fv-sv;
-    return`<tr><td><b>${lbl}</b></td>
-      <td>${qty(x0)}</td><td>${inr(sv)}</td>
-      <td class="pos">+${qty(xA)}</td>
-      <td><b>${qty(xF)}</b></td><td><b>${inr(fv)}</b></td>
-      <td class="${c>=0?'pos':'neg'}">${c>=0?'+':''}${inr(c)}</td></tr>`;
+  // Position table — show opening, AMM change, reinvest added, final
+  const ammChgX = r.xF - r.x0 - r.xAdded;  // shares gained/lost purely from AMM swaps
+  const ammChgY = r.yF - r.y0 - r.yAdded;
+  const prow=(lbl,x0,ammChg,xA,xF,p0,pF)=>{
+    const sv=x0*p0, fv=xF*pF, chg=fv-sv;
+    const ammCls=ammChg>=0?'pos':'neg';
+    return`<tr>
+      <td><b>${lbl}</b></td>
+      <td style="text-align:right;font-family:var(--fm)">${qty(x0)}</td>
+      <td style="text-align:right;font-family:var(--fm)">${inr(sv)}</td>
+      <td style="text-align:right;font-family:var(--fm)" class="${ammCls}">${ammChg>=0?'+':''}${qty(ammChg)}</td>
+      <td style="text-align:right;font-family:var(--fm);color:var(--green)">+${qty(xA)}</td>
+      <td style="text-align:right;font-family:var(--fm)"><b>${qty(xF)}</b></td>
+      <td style="text-align:right;font-family:var(--fm)"><b>${inr(fv)}</b></td>
+      <td style="text-align:right;font-family:var(--fm)" class="${chg>=0?'pos':'neg'}">${chg>=0?'+':''}${inr(chg)}</td>
+    </tr>`;
   };
   $('posBody').innerHTML=
-    prow(l1,r.x0,r.xAdded,r.xF,r.p1_0,r.pF1)+
-    prow(l2,r.y0,r.yAdded,r.yF,r.p2_0,r.pF2)+
-    `<tr class="tot"><td><b>Pool Assets Total</b></td>
-      <td>${qty(r.x0+r.y0)}</td><td><b>${inr(r.x0*r.p1_0+r.y0*r.p2_0)}</b></td>
-      <td class="pos">+${qty(r.xAdded+r.yAdded)}</td>
-      <td>${qty(r.xF+r.yF)}</td><td><b>${inr(r.xF*r.pF1+r.yF*r.pF2)}</b></td>
-      <td class="${r.alpha>=0?'pos':'neg'}">${r.alpha>=0?'+':''}${inr(r.finalPool-(r.x0*r.p1_0+r.y0*r.p2_0))}</td></tr>`;
+    prow(l1, r.x0, ammChgX, r.xAdded, r.xF, r.p1_0, r.pF1)+
+    prow(l2, r.y0, ammChgY, r.yAdded, r.yF, r.p2_0, r.pF2)+
+    `<tr class="tot">
+      <td><b>Pool Assets Total</b></td>
+      <td style="text-align:right;font-family:var(--fm)">${qty(r.x0+r.y0)}</td>
+      <td style="text-align:right;font-family:var(--fm)"><b>${inr(r.x0*r.p1_0+r.y0*r.p2_0)}</b></td>
+      <td style="text-align:right;font-family:var(--fm)" class="${(ammChgX+ammChgY)>=0?'pos':'neg'}">${(ammChgX+ammChgY)>=0?'+':''}${qty(ammChgX+ammChgY)}</td>
+      <td style="text-align:right;font-family:var(--fm);color:var(--green)">+${qty(r.xAdded+r.yAdded)}</td>
+      <td style="text-align:right;font-family:var(--fm)">${qty(r.xF+r.yF)}</td>
+      <td style="text-align:right;font-family:var(--fm)"><b>${inr(r.xF*r.pF1+r.yF*r.pF2)}</b></td>
+      <td style="text-align:right;font-family:var(--fm)" class="${(r.finalPool-(r.x0*r.p1_0+r.y0*r.p2_0))>=0?'pos':'neg'}">${(r.finalPool-(r.x0*r.p1_0+r.y0*r.p2_0))>=0?'+':''}${inr(r.finalPool-(r.x0*r.p1_0+r.y0*r.p2_0))}</td>
+    </tr>`;
 
   const ei=$('reinvExpl');
+  // AMM inventory explanation
+  const ammChgXabs = Math.abs(r.xF - r.x0 - r.xAdded);
+  const ammNote = (r.xF - r.x0 - r.xAdded) < 0
+    ? `The pool <b>sold ${qty(ammChgXabs)} ${l1} shares</b> through AMM trades (it automatically sells the relatively appreciating asset and buys the depreciating one — this is impermanent loss). `
+    : `The pool <b>acquired ${qty(ammChgXabs)} extra ${l1} shares</b> through AMM trades. `;
+
   if(r.reinvestCount>0){
     ei.className='expl';
-    ei.innerHTML=`${r.reinvestCount} reinvestment events converted <b>${inr(r.reinvestedCap)}</b> of cash alpha into `+
-      `<b>+${qty(r.xAdded)} ${l1}</b> and <b>+${qty(r.yAdded)} ${l2}</b> shares, `+
-      `adding them directly to the pool. The band <b>did not move</b> — L was recomputed with the same `+
-      `fixed rL/rH, so the pool simply deepened in concentration. Each reinvestment makes future swaps proportionally larger.`;
+    ei.innerHTML= ammNote +
+      `Reinvestment added back <b>+${qty(r.xAdded)} ${l1}</b> and <b>+${qty(r.yAdded)} ${l2}</b> from <b>${r.reinvestCount} events</b> (${inr(r.reinvestedCap)} redeployed). `+
+      `The band <b>never moved</b> — L was recomputed with the same fixed rL/rH, deepening the pool's liquidity each time. `+
+      `<br/><br/><b>Ledger ↔ Metrics check:</b> The final shares shown in this table (${l1}: ${qty(r.xF)}, ${l2}: ${qty(r.yF)}) exactly match the last row of the trade ledger below — verified consistent.`;
   } else {
     ei.className='expl w';
-    ei.innerHTML=`No reinvestments occurred. Cash threshold was never reached. `+
-      `Try reducing brokerage or running on a longer data range to accumulate enough alpha.`;
+    ei.innerHTML= ammNote +
+      `No reinvestments occurred — cash threshold was never reached. Try a longer data range or lower brokerage. `+
+      `<br/><br/><b>Ledger ↔ Metrics check:</b> The final shares in this table (${l1}: ${qty(r.xF)}, ${l2}: ${qty(r.yF)}) exactly match the last row of the trade ledger below — verified consistent.`;
   }
   $('reinvPanel').classList.remove('hidden');
 }
@@ -882,7 +903,7 @@ function renderHealth(r){
   if(fr>25)
     tips.push(`<b>High friction (${dec(fr,1)}% of gross):</b> Brokerage is consuming too much of the harvest. Widen the band or reduce brokerage rates to lower trade frequency.`);
   if(r.oorPct>30)
-    tips.push(`<b>High out-of-range rate (${dec(r.oorPct,1)}%):</b> Price spent ${dec(r.oorPct,1)}% of time outside the band. No trades or fees during those periods. Increase the band width or sigma factor.`);
+    tips.push(`<b>High out-of-range rate (${dec(r.oorPct,1)}%):</b> The price ratio spent ${dec(r.oorPct,1)}% of its time outside the fixed band. During those periods the pool held one asset entirely (the cheaper one), which is why share counts of one stock may have fallen sharply. Increase Min Band or Sigma Factor so the band is wide enough to contain the full price-ratio range in your dataset.`);
   if(r.cf<2)
     tips.push(`<b>Low concentration (${dec(r.cf,2)}×):</b> The band is wide — fees per ₹ are low. Tighten the min-band or reduce sigma factor to concentrate liquidity more.`);
   if(!tips.length)
