@@ -1,38 +1,32 @@
-# V3 Pool — Alpha Reinvestment Dashboard
-**Version 2.0  |  Built 2026-05-13**
+# V3 Pool — Alpha Reinvestment Dashboard  v3.0
 
-A clean, investor-grade Uniswap V3 concentrated liquidity simulation
-for NSE stock pairs with automatic alpha reinvestment.
+## What changed in v3.0
+- **No recentering ever.** `rL` and `rH` are set once at the opening
+  price ratio and never move. The band is permanent.
+- **No rebalancing events.** When price exits the band the pool holds its
+  position and waits. No forced reset, no brokerage event.
+- **Fixed L between reinvestments.** L is computed once at init. It only
+  grows when cash profits are reinvested — not on every price tick.
+- **Cash-balanced trades.** Sell N shares → take proceeds → buy only what
+  proceeds cover after brokerage. No inventory bleed, no phantom shares.
+- **Dynamic initial band (optional).** Band width is derived from the
+  first N hours of data volatility (k × σ). Set once. Never moves.
+- **Out-of-range tracking.** Chart shows red shading when pool is OOR.
+  Status bar and health panel report OOR %, with advice to widen band.
 
-## What it does
-- Runs hourly V3 swap arbitrage between two NSE stocks
-- Reinvests accumulated swap profits back into the pool (compounding L)
-- Shows plain-₹ results: Pool Value, vs Hold, Cash Collected, IL
-- Merged swap + reinvestment event ledger with CSV download
+## Deploy (Firebase App Hosting)
+1. Push this folder to GitHub
+2. Connect to a Firebase App Hosting backend
+3. App Hosting reads `apphosting.yaml` → `npm run build` → `node server.mjs`
 
-## Deploy to Firebase App Hosting
-1. Push this repo to GitHub
-2. Connect it to a Firebase App Hosting backend
-3. App Hosting reads `apphosting.yaml` → runs `npm run build` → starts `node server.mjs`
-
-## Local development
+## Local dev
 ```bash
 npm run dev
-# Open http://localhost:3000
+# http://localhost:3000
 ```
 
-## CSV format required
-Each uploaded file must have columns: `date`, `close`, `volume`
-- `date`: any ISO-8601 timestamp (e.g. `2025-01-01 09:15:00+05:30`)
-- `close`: numeric price in ₹
-- `volume`: numeric traded volume (used for bucketing, not weighting)
-- 1-minute bars are automatically merged to hourly
-
-## Configuration (in-browser)
-| Setting | Default | Notes |
-|---------|---------|-------|
-| Band Width ± % | 20% | Price range around opening ratio. Narrower = more fees, more IL risk |
-| Buy Brokerage | 0.15% | STT + broker on buy leg |
-| Sell Brokerage | 0.15% | STT + broker on sell leg |
-| Reinvest Brokerage | 0.15% | Applied when buying reinvestment lots |
-| Reinvest enabled | Yes | Buys 1 A + round(Y/X) B shares when cash accumulates |
+## CSV format
+Columns required: `date`, `close`, `volume`
+- `date`: ISO-8601 e.g. `2025-01-02 09:15:00+05:30`
+- `close`: price in ₹
+- 1-minute bars → merged to hourly automatically
