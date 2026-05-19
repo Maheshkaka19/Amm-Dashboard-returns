@@ -196,6 +196,9 @@ table.ht .or td{background:rgba(244,63,94,.02)}
 .bs{background:rgba(6,182,212,.14);color:#67e8f9}
 .br{background:var(--green-lo);color:#6ee7b7}
 .bo{background:var(--red-lo);color:#fca5a5}
+.breb{background:rgba(245,158,11,.14);color:#fde68a}
+table.ht .rr td{background:rgba(16,185,129,.03)}
+table.ht .reb-r td{background:rgba(245,158,11,.04)}
 
 .tnote{font-size:.69rem;color:var(--muted);margin-bottom:8px}
 .dlbtn{border:1px solid var(--border-hi);border-radius:8px;
@@ -317,7 +320,10 @@ table.ht .or td{background:rgba(244,63,94,.02)}
     <div class="field"><label>Reinvestment Brokerage %</label>
       <input id="breinv" type="number" min="0" max="5" step="0.01" value="0.15"/>
     </div>
-    <p class="fhint">Cash alpha buys 1 A + round(Y/X) B shares at the current price ratio. L is recomputed with the same fixed band — growing the pool without moving the range.</p>
+    <p class="fhint"><b style="color:var(--amber)">Smart two-mode engine — reinvestment never stops.</b><br/>
+    <b>Normal mode</b> (balanced pool): buys 1A + round(Y/X)B lots, maximum lots per hour.<br/>
+    <b>Rebalance mode</b> (one asset &lt;20% of value): buys only the depleted asset — as few as 1 share — to restore balance before resuming normal mode.<br/>
+    Fires every hour regardless of whether pool is in or out of range.</p>
   </div>
 
   <button class="run-btn" id="runBtn">▶ Run Simulation</button>
@@ -554,7 +560,8 @@ function runSimulation(rows1,rows2,capital,cfg){
   // ── State ────────────────────────────────────────────────────
   let cash=0, totBrok=0, grossFees=0;
   let swapCount=0, skipCount=0, oorCount=0, oorHours=0;
-  let reinvestCount=0, xAdded=0, yAdded=0, reinvestedCap=0;
+  let reinvestCount=0, reinvestNormalCount=0, reinvestRebalCount=0;
+  let xAdded=0, yAdded=0, reinvestedCap=0;
 
   const lr1=[], lr2=[];   // log-returns for correlation
   const swaps=[], reinvests=[], curve=[];
@@ -632,28 +639,69 @@ function runSimulation(rows1,rows2,capital,cfg){
     }
     if(!traded&&!inRange) oorCount++;
 
-    // ── REINVESTMENT ─────────────────────────────────────────
-    // Cash buys lots in current pool ratio.
-    // L is recomputed from new pool value with SAME fixed rL, rH.
-    if(doReinv && cash>0 && xS>0 && yS>0){
-      const ratio   = Math.max(1, Math.round(yS/xS));
-      const rawLot  = p1 + ratio*p2;
-      const lotCost = rawLot*(1+bReinv);
-      if(cash>=lotCost){
-        const n    = Math.floor(cash/lotCost);
-        const addX = n, addY = n*ratio;
-        const raw  = addX*p1 + addY*p2;
-        const brok = bReinv*raw;
-        const spent= raw+brok;
-        if(cash>=spent && addX>=1 && addY>=1){
-          xS+=addX; yS+=addY;
-          xAdded+=addX; yAdded+=addY;
-          cash-=spent; totBrok+=brok; reinvestedCap+=raw; reinvestCount++;
-          // L grows — same rL, rH, center on opening ratio
-          const rClamped = cl(r, rL, rH);
-          L = computeL(xS*p1+yS*p2, p1, p2, rClamped, rL, rH);
-          reinvests.push({date:date.toISOString(),addX,addY,ratio,n,
-            raw,brok,spent,cash,xS,yS,p1,p2,inRange});
+    // ── SMART REINVESTMENT ────────────────────────────────────────
+    // Runs every hour regardless of InRange status.
+    // Two modes chosen automatically:
+    //
+    // REBALANCE MODE — fires when one asset < 20% of pool value.
+    //   Buys ONLY the depleted asset, as few as 1 share at a time.
+    //   Minimum cash needed = 1 share of the cheaper asset + brok.
+    //   Restores balance so normal-mode can resume, and ensures
+    //   reinvestment NEVER stops due to share depletion.
+    //
+    // NORMAL MODE — fires when pool is balanced (both > 20% value).
+    //   Buys 1A + round(Y/X)B per lot, as many lots as cash allows.
+    //
+    // Both modes recompute L with the same fixed rL/rH after buying.
+    if(doReinv && cash>0){
+      const valA  = xS*p1;
+      const valB  = yS*p2;
+      const total = valA+valB;
+      // balanceFrac = fraction of pool in the smaller side (0=empty, 0.5=perfect)
+      const balanceFrac = total>0 ? Math.min(valA,valB)/total : 0;
+
+      if(balanceFrac < 0.20 && total>0){
+        // ── REBALANCE MODE ──────────────────────────────────────
+        const buyA   = valA <= valB;          // buy whichever side is smaller
+        const bPrice = buyA ? p1 : p2;
+        const minCost= bPrice*(1+bReinv);     // cost of just 1 share + brok
+        if(cash >= minCost){
+          const n    = Math.floor(cash/minCost);
+          const raw  = n*bPrice;
+          const brok = bReinv*raw;
+          const spent= raw+brok;
+          if(spent>0 && cash>=spent && n>=1){
+            if(buyA){ xS+=n; xAdded+=n; } else { yS+=n; yAdded+=n; }
+            cash-=spent; totBrok+=brok; reinvestedCap+=raw;
+            reinvestCount++; reinvestRebalCount++;
+            const rCur=cl(r,rL,rH);
+            L=computeL(xS*p1+yS*p2,p1,p2,rCur,rL,rH);
+            reinvests.push({date:date.toISOString(),mode:'rebalance',
+              addX:buyA?n:0, addY:buyA?0:n, ratio:null, n,
+              raw,brok,spent,cash,xS,yS,p1,p2,inRange});
+          }
+        }
+      } else if(xS>0 && yS>0){
+        // ── NORMAL MODE ─────────────────────────────────────────
+        const ratio   = Math.max(1,Math.round(yS/xS));
+        const rawLot  = p1+ratio*p2;
+        const lotCost = rawLot*(1+bReinv);
+        if(cash>=lotCost){
+          const n    = Math.floor(cash/lotCost);
+          const addX = n, addY = n*ratio;
+          const raw  = addX*p1+addY*p2;
+          const brok = bReinv*raw;
+          const spent= raw+brok;
+          if(cash>=spent && addX>=1 && addY>=1){
+            xS+=addX; yS+=addY;
+            xAdded+=addX; yAdded+=addY;
+            cash-=spent; totBrok+=brok; reinvestedCap+=raw;
+            reinvestCount++; reinvestNormalCount++;
+            const rCur=cl(r,rL,rH);
+            L=computeL(xS*p1+yS*p2,p1,p2,rCur,rL,rH);
+            reinvests.push({date:date.toISOString(),mode:'normal',
+              addX,addY,ratio,n,raw,brok,spent,cash,xS,yS,p1,p2,inRange});
+          }
         }
       }
     }
@@ -684,7 +732,7 @@ function runSimulation(rows1,rows2,capital,cfg){
     holdRoi:    startCap>0?(finalHold/startCap-1)*100:0,
     alphaRoi:   finalHold>0?alpha/finalHold*100:0,
     ilPct:      finalHold>0?il/finalHold*100:0,
-    swapCount,skipCount,reinvestCount,
+    swapCount,skipCount,reinvestCount,reinvestNormalCount,reinvestRebalCount,
     xAdded,yAdded,reinvestedCap,
     x0,y0,xF:xS,yF:yS,p1_0,p2_0,pF1,pF2,
     hours:hourly.length,oorHours,oorPct,
@@ -805,16 +853,18 @@ function renderMetrics(r){
 function renderReinvest(r,l1,l2){
   const s=(lbl,val,cls='')=>`<div class="st"><div class="st-l">${lbl}</div><div class="st-v ${cls}">${val}</div></div>`;
   $('reinvStats').innerHTML=[
-    s('Fixed Band ±',          `${dec(r.band,2)}%`,'amb'),
-    s('Concentration Factor',  `${dec(r.cf,2)}×`,'amb'),
-    s('In-Range Hours',        `${dec(100-r.oorPct,1)}%`,(100-r.oorPct)>70?'pos':'neg'),
-    s('Out-of-Range Hours',    `${dec(r.oorPct,1)}%`,r.oorPct>30?'neg':'mut'),
-    s('Reinvestment Events',   r.reinvestCount?`${r.reinvestCount}×`:'None',r.reinvestCount?'pos':'mut'),
-    s(`${l1} Added`,           r.xAdded?`+${qty(r.xAdded)}`:'—','pos'),
-    s(`${l2} Added`,           r.yAdded?`+${qty(r.yAdded)}`:'—','pos'),
-    s('Capital Reinvested',    r.reinvestedCap?inr(r.reinvestedCap):'—'),
-    s('Brokerage (all)',        inr(r.totBrok),'neg'),
-    s('Gross Swap Revenue',    inr(r.grossFees)),
+    s('Fixed Band ±',               `${dec(r.band,2)}%`,'amb'),
+    s('Concentration Factor',       `${dec(r.cf,2)}×`,'amb'),
+    s('In-Range Hours',             `${dec(100-r.oorPct,1)}%`,(100-r.oorPct)>70?'pos':'neg'),
+    s('Out-of-Range Hours',         `${dec(r.oorPct,1)}%`,r.oorPct>30?'neg':'mut'),
+    s('🔄 Normal Reinvestments',    r.reinvestNormalCount?`${r.reinvestNormalCount}×`:'None', r.reinvestNormalCount?'pos':'mut'),
+    s('⚖️ Rebalance Reinvestments', r.reinvestRebalCount ?`${r.reinvestRebalCount}×` :'None', r.reinvestRebalCount ?'amb':'mut'),
+    s('Total Reinvest Events',      r.reinvestCount?`${r.reinvestCount}×`:'None',r.reinvestCount?'pos':'mut'),
+    s(`${l1} Added`,                r.xAdded?`+${qty(r.xAdded)}`:'—','pos'),
+    s(`${l2} Added`,                r.yAdded?`+${qty(r.yAdded)}`:'—','pos'),
+    s('Capital Reinvested',         r.reinvestedCap?inr(r.reinvestedCap):'—'),
+    s('Brokerage (all)',            inr(r.totBrok),'neg'),
+    s('Gross Swap Revenue',         inr(r.grossFees)),
   ].join('');
 
   // OOR banner — explain inventory depreciation when OOR is high
@@ -860,23 +910,27 @@ function renderReinvest(r,l1,l2){
     </tr>`;
 
   const ei=$('reinvExpl');
-  // AMM inventory explanation
   const ammChgXabs = Math.abs(r.xF - r.x0 - r.xAdded);
   const ammNote = (r.xF - r.x0 - r.xAdded) < 0
-    ? `The pool <b>sold ${qty(ammChgXabs)} ${l1} shares</b> through AMM trades (it automatically sells the relatively appreciating asset and buys the depreciating one — this is impermanent loss). `
-    : `The pool <b>acquired ${qty(ammChgXabs)} extra ${l1} shares</b> through AMM trades. `;
+    ? `AMM traded <b>−${qty(ammChgXabs)} ${l1}</b> shares (sold the outperformer, bought underperformer — IL mechanism). `
+    : `AMM accumulated <b>+${qty(ammChgXabs)} extra ${l1}</b> shares through trades. `;
 
   if(r.reinvestCount>0){
+    const modeBreakdown = r.reinvestRebalCount>0
+      ? `<b>${r.reinvestNormalCount} normal</b> (proportional lot) + <b>${r.reinvestRebalCount} rebalance</b> (single-asset recovery, fired when one side fell below 20% of pool value)`
+      : `<b>${r.reinvestNormalCount} normal</b> proportional-lot events`;
     ei.className='expl';
     ei.innerHTML= ammNote +
-      `Reinvestment added back <b>+${qty(r.xAdded)} ${l1}</b> and <b>+${qty(r.yAdded)} ${l2}</b> from <b>${r.reinvestCount} events</b> (${inr(r.reinvestedCap)} redeployed). `+
-      `The band <b>never moved</b> — L was recomputed with the same fixed rL/rH, deepening the pool's liquidity each time. `+
-      `<br/><br/><b>Ledger ↔ Metrics check:</b> The final shares shown in this table (${l1}: ${qty(r.xF)}, ${l2}: ${qty(r.yF)}) exactly match the last row of the trade ledger below — verified consistent.`;
+      `Reinvestment: ${modeBreakdown} — redeployed <b>${inr(r.reinvestedCap)}</b> into `+
+      `<b>+${qty(r.xAdded)} ${l1}</b> and <b>+${qty(r.yAdded)} ${l2}</b> shares. `+
+      `L grew with the same fixed rL/rH each time, deepening concentration without moving the band. `+
+      (r.reinvestRebalCount>0 ? `Rebalance mode kept compounding uninterrupted even during one-sided ratio drift. ` : '')+
+      `<br/><br/><b>Ledger ↔ Metrics:</b> Final shares (${l1}: ${qty(r.xF)}, ${l2}: ${qty(r.yF)}) match the last ledger row exactly.`;
   } else {
     ei.className='expl w';
     ei.innerHTML= ammNote +
-      `No reinvestments occurred — cash threshold was never reached. Try a longer data range or lower brokerage. `+
-      `<br/><br/><b>Ledger ↔ Metrics check:</b> The final shares in this table (${l1}: ${qty(r.xF)}, ${l2}: ${qty(r.yF)}) exactly match the last row of the trade ledger below — verified consistent.`;
+      `No reinvestments fired — cash never reached the minimum threshold. Try a longer data range or lower brokerage. `+
+      `<br/><br/><b>Ledger ↔ Metrics:</b> Final shares (${l1}: ${qty(r.xF)}, ${l2}: ${qty(r.yF)}) match the last ledger row exactly.`;
   }
   $('reinvPanel').classList.remove('hidden');
 }
@@ -942,31 +996,40 @@ function renderHistory(swaps,reinvests,l1,l2){
         <td class="r ${e.inRange?'pos':'neg'}">${e.inRange?'✓ Yes':'✗ No'}</td>
       </tr>`;
     }
-    return`<tr class="rr">
+    const isRebal = e.mode==='rebalance';
+    const badge   = isRebal ? '<span class="bdg breb">⚖️ REBALANCE</span>' : '<span class="bdg br">🔄 REINVEST</span>';
+    const rowCls  = isRebal ? 'reb-r' : 'rr';
+    const actionTxt = isRebal
+      ? `Buy ${qty(e.addX>0?e.addX:e.addY)} ${e.addX>0?l1:l2} only (rebalancing depleted side)`
+      : `+${qty(e.addX)} ${l1} + ${qty(e.addY)} ${l2} (1:${e.ratio}, ${e.n} lots)`;
+    return`<tr class="${rowCls}">
       <td>${fdt(e.date)}</td>
-      <td><span class="bdg br">REINVEST</span></td>
-      <td style="font-family:var(--fb)">+${qty(e.addX)} ${l1} + ${qty(e.addY)} ${l2} (1:${e.ratio}, ${e.n} lots)</td>
+      <td>${badge}${!e.inRange?'<span class="bdg bo" style="margin-left:4px">OOR</span>':''}</td>
+      <td style="font-family:var(--fb)">${actionTxt}</td>
       <td class="r mut">—</td>
       <td class="r pos">+${qty(e.addX+e.addY)}</td>
       <td class="r neg">${inr2(-e.spent)}</td>
       <td class="r">${inr(e.cash)}</td>
       <td class="r pos">${qty(e.xS)}</td>
       <td class="r pos">${qty(e.yS)}</td>
-      <td class="r pos">✓ Yes</td>
+      <td class="r ${e.inRange?'pos':'neg'}">${e.inRange?'✓ Yes':'✗ No'}</td>
     </tr>`;
   }).join('');
   $('histPanel').classList.remove('hidden');
 }
 
 function dlCsv(swaps,reinvests){
-  const h='Type,Date,Action,Sell,Buy,Net,Cash,A_Shares,B_Shares,A_Price,B_Price,InRange';
+  const h='Type,Mode,Date,Action,Sell,Buy,Net,Cash,A_Shares,B_Shares,A_Price,B_Price,InRange';
   const rows=[h,
     ...swaps.map(s=>[
-      'SWAP',s.date,`"${s.sellA?'Sell A→Buy B':'Sell B→Buy A'}"`,
+      'SWAP','normal',s.date,`"${s.sellA?'Sell A→Buy B':'Sell B→Buy A'}"`,
       s.sell,s.buy,s.net.toFixed(2),s.cash.toFixed(2),s.xS,s.yS,s.p1,s.p2,s.inRange
     ].join(',')),
     ...reinvests.map(r=>[
-      'REINVEST',r.date,`"Buy ${r.addX} A + ${r.addY} B"`,
+      'REINVEST',r.mode||'normal',r.date,
+      r.mode==='rebalance'
+        ?`"Buy ${r.addX>0?r.addX:r.addY} ${r.addX>0?'A':'B'} only (rebalance)"`
+        :`"Buy ${r.addX} A + ${r.addY} B"`,
       0,r.addX+r.addY,(-r.spent).toFixed(2),r.cash.toFixed(2),r.xS,r.yS,r.p1,r.p2,r.inRange
     ].join(','))
   ];
