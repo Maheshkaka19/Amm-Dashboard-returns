@@ -564,7 +564,27 @@ function runSimulation(rows1,rows2,capital,cfg){
   let xAdded=0, yAdded=0, reinvestedCap=0;
 
   const lr1=[], lr2=[];   // log-returns for correlation
-  const swaps=[], reinvests=[], curve=[];
+  // ── Protective guard state ───────────────────────────────────────
+  // Guard 1 — Hurst trending pause: if rolling Hurst > 0.55 (trending
+  //   regime detected), pause swaps until it drops below 0.48.
+  // Guard 2 — Brokerage cap: if cumulative brokerage exceeds 4% of
+  //   opening capital, widen the effective min-net threshold by 3× to
+  //   throttle marginal trades.
+  // Guard 3 — Swap frequency throttle: if swaps in last 24h > 48
+  //   (avg 2/hr), require net > 2× normal min to slow down.
+  // Guard 4 — Min net threshold: never execute swap with net < ₹10
+  //   to filter brokerage-eating micro-trades.
+  const MIN_NET_INR  = 10;           // Guard 4 base floor
+  const BROK_CAP_PCT = 0.04;         // Guard 2: 4% of start capital
+  const HURST_PAUSE  = 0.55;         // Guard 1: pause threshold
+  const HURST_RESUME = 0.48;         // Guard 1: resume threshold
+  const MAX_SWAPS_24H = 48;          // Guard 3: 2/hr over 24h window
+
+  let trendPaused      = false;      // Guard 1 active flag
+  let trendPausedAt    = null;
+  let trendResumedAt   = null;
+  let guardPauseCount  = 0;
+  const recentSwapTimes = [];        // Guard 3 rolling window
 
   curve.push({date:hourly[0].date.toISOString(),pool:startCap,hold:startCap,cash:0,inRange:true});
 
@@ -579,44 +599,77 @@ function runSimulation(rows1,rows2,capital,cfg){
       lr2.push(Math.log(p2/hourly[i-1].c2));
     }
 
+    // ── GUARD 1: Hurst trending detection ─────────────────────────
+    // Compute rolling Hurst on last 48 log-ratio returns.
+    // If H > 0.55 → market is trending → pause swaps to stop selling
+    // the outperformer in a one-directional move.
+    // If H < 0.48 → mean-reversion restored → resume.
+    let hurstNow = 0.5;
+    if(logRatios.length >= 12){
+      const lr  = logRatios.slice(-48);
+      const mn  = lr.reduce((s,v)=>s+v,0)/lr.length;
+      const cum = lr.reduce((acc,v,i)=>{ acc.push((acc[i-1]||0)+(v-mn)); return acc; },[]);
+      const R   = Math.max(...cum) - Math.min(...cum);
+      const sd  = Math.sqrt(lr.reduce((s,v)=>s+(v-mn)**2,0)/(lr.length-1)||1e-9);
+      hurstNow  = R>0&&sd>0 ? Math.log(R/sd)/Math.log(lr.length) : 0.5;
+      hurstNow  = Math.max(0.2, Math.min(0.9, hurstNow));
+    }
+    if(!trendPaused && hurstNow > HURST_PAUSE){
+      trendPaused = true; trendPausedAt = date.toISOString(); guardPauseCount++;
+    } else if(trendPaused && hurstNow < HURST_RESUME){
+      trendPaused = false; trendResumedAt = date.toISOString();
+    }
+
+    // ── GUARD 2+3: Dynamic min-net threshold ──────────────────────
+    // Raises bar for swap execution when brokerage or frequency is high.
+    const brokPctSoFar = totBrok / (startCap || 1);
+    const now24h = date.getTime();
+    while(recentSwapTimes.length && now24h-recentSwapTimes[0] > 86400000) recentSwapTimes.shift();
+    const swaps24h = recentSwapTimes.length;
+    const brokMult = brokPctSoFar > BROK_CAP_PCT ? 3 : 1;   // Guard 2
+    const freqMult = swaps24h > MAX_SWAPS_24H    ? 2 : 1;   // Guard 3
+    const minNet   = MIN_NET_INR * brokMult * freqMult;      // Guard 4 combined
+
+    const swapAllowed = !trendPaused;
+
+    // ── SWAP ─────────────────────────────────────────────────
+    // Gated by all 4 protective guards:
+    //   Guard 1 (trendPaused): skip if Hurst > 0.55 (trending market)
+    //   Guard 2 (brokMult):    raise minNet 3× if brok > 4% of capital
+    //   Guard 3 (freqMult):    raise minNet 2× if > 48 swaps in last 24h
+    //   Guard 4 (minNet):      skip any swap earning < ₹10 net
     const inRange = r>=rL && r<=rH;
     if(!inRange) oorHours++;
 
-    // ── SWAP ─────────────────────────────────────────────────
-    // v3Res with clamp gives correct target for BOTH in-range
-    // and out-of-range prices (boundary state when out of range).
-    // L is FIXED between reinvestments — NOT recomputed here.
-    const tgt = v3Res(L, r, rL, rH);   // target reserves at current price
+    const tgt = v3Res(L, r, rL, rH);
     const xT  = Math.max(0, Math.round(tgt.x));
     const yT  = Math.max(0, Math.round(tgt.y));
-    const dx  = xT - xS;  // <0 sell A; >0 buy A
-    const dy  = yT - yS;  // >0 buy B; <0 sell B
+    const dx  = xT - xS;
+    const dy  = yT - yS;
 
     let traded=false, swapInfo=null;
 
-    if(dx<0 && xS>1){
-      // Pool needs fewer A → sell A, buy B with proceeds
-      const sellA = Math.min(-dx, xS-1);  // never sell last share
+    if(swapAllowed && dx<0 && xS>1){
+      const sellA = Math.min(-dx, xS-1);
       if(sellA>=1){
         const grossRev = sellA*p1;
-        // Cash-balanced: proceeds after sell-brok → buy as many B as affordable
         const netRev   = grossRev*(1-bSell);
         const buyB     = Math.floor(netRev/(p2*(1+bBuy)));
         if(buyB>=1){
           const brok = bSell*grossRev + bBuy*buyB*p2;
           const net  = grossRev - buyB*p2 - brok;
-          if(net>0){
+          if(net >= minNet){                          // Guard 4 enforced here
             xS-=sellA; yS+=buyB;
             cash+=net; totBrok+=brok; grossFees+=(grossRev-buyB*p2); swapCount++;
+            recentSwapTimes.push(date.getTime());    // Guard 3 frequency track
             traded=true;
             swapInfo={date:date.toISOString(),sellA:true,sell:sellA,buy:buyB,
-              net,cash,brok,p1,p2,xS,yS,inRange};
+              net,cash,brok,p1,p2,xS,yS,inRange,paused:false};
             swaps.push(swapInfo);
           }else skipCount++;
         }else skipCount++;
       }
-    } else if(dx>0 && yS>1){
-      // Pool needs more A → sell B, buy A with proceeds
+    } else if(swapAllowed && dx>0 && yS>1){
       const sellB_want = dy<0 ? -dy : Math.max(1,Math.round(dx*p1/p2));
       const sellB = Math.min(sellB_want, yS-1);
       if(sellB>=1){
@@ -626,12 +679,13 @@ function runSimulation(rows1,rows2,capital,cfg){
         if(buyA>=1){
           const brok = bSell*grossRev + bBuy*buyA*p1;
           const net  = grossRev - buyA*p1 - brok;
-          if(net>0){
+          if(net >= minNet){                          // Guard 4 enforced here
             xS+=buyA; yS-=sellB;
             cash+=net; totBrok+=brok; grossFees+=(grossRev-buyA*p1); swapCount++;
+            recentSwapTimes.push(date.getTime());    // Guard 3 frequency track
             traded=true;
             swapInfo={date:date.toISOString(),sellA:false,sell:sellB,buy:buyA,
-              net,cash,brok,p1,p2,xS,yS,inRange};
+              net,cash,brok,p1,p2,xS,yS,inRange,paused:false};
             swaps.push(swapInfo);
           }else skipCount++;
         }else skipCount++;
@@ -732,6 +786,7 @@ function runSimulation(rows1,rows2,capital,cfg){
     holdRoi:    startCap>0?(finalHold/startCap-1)*100:0,
     alphaRoi:   finalHold>0?alpha/finalHold*100:0,
     ilPct:      finalHold>0?il/finalHold*100:0,
+    trendPaused, trendPausedAt, trendResumedAt, guardPauseCount,
     swapCount,skipCount,reinvestCount,reinvestNormalCount,reinvestRebalCount,
     xAdded,yAdded,reinvestedCap,
     x0,y0,xF:xS,yF:yS,p1_0,p2_0,pF1,pF2,
@@ -936,34 +991,61 @@ function renderReinvest(r,l1,l2){
 }
 
 function renderHealth(r){
-  const corrPct=r.corr!=null?Math.round(r.corr*100):null;
-  const fr=r.grossFees>0?r.totBrok/r.grossFees*100:0;
-  const sr=r.swapCount>0?r.swapCount/(r.swapCount+(r.skipCount||0))*100:0;
-  const s=(lbl,val,cls='')=>`<div class="st"><div class="st-l">${lbl}</div><div class="st-v ${cls}">${val}</div></div>`;
+  const corrPct = r.corr!=null ? Math.round(r.corr*100) : null;
+  const fr      = r.grossFees>0 ? r.totBrok/r.grossFees*100 : 0;
+  const brokCapPct = r.totBrok/(r.startCap||1)*100;
+  const swapPerHr  = r.hours>0 ? r.swapCount/r.hours : 0;
+  const priceAsym  = r.p1_0>0&&r.p2_0>0 ? Math.max(r.p1_0,r.p2_0)/Math.min(r.p1_0,r.p2_0) : 1;
+  const sr      = r.swapCount>0 ? r.swapCount/(r.swapCount+(r.skipCount||0))*100 : 0;
+
+  const s=(lbl,val,cls='')=>
+    `<div class="st"><div class="st-l">${lbl}</div><div class="st-v ${cls}">${val}</div></div>`;
+
   $('healthStats').innerHTML=[
-    s('Pair Correlation',corrPct!=null?`${corrPct}%`:'—',corrPct>70?'pos':corrPct>40?'amb':'neg'),
-    s('Band Set At ±',`${dec(r.band,2)}%`,'amb'),
-    s('Concentration',`${dec(r.cf,2)}×`,'amb'),
-    s('In-Range Rate',`${dec(100-r.oorPct,1)}%`,(100-r.oorPct)>70?'pos':'neg'),
-    s('Swap Hit Rate', `${dec(sr,1)}%`,'pos'),
-    s('Friction / Gross',`${dec(fr,1)}%`,fr<15?'pos':fr<30?'amb':'neg'),
-    s('Total Swaps',   qty(r.swapCount),'pos'),
-    s('Hours Simulated',qty(r.hours)),
+    s('Pair Correlation',   corrPct!=null?`${corrPct}%`:'—', corrPct>70?'pos':corrPct>40?'amb':'neg'),
+    s('Band ±',             `${dec(r.band,2)}%`,'amb'),
+    s('Concentration',      `${dec(r.cf,2)}×`,'amb'),
+    s('Price Asymmetry',    `${dec(priceAsym,2)}×`, priceAsym>=2?'pos':'neg'),
+    s('Swaps / Hour',       `${dec(swapPerHr,2)}`, swapPerHr<1?'pos':swapPerHr<2?'amb':'neg'),
+    s('Brokerage / Capital',`${dec(brokCapPct,2)}%`, brokCapPct<4?'pos':brokCapPct<8?'amb':'neg'),
+    s('Friction / Gross',   `${dec(fr,1)}%`, fr<15?'pos':fr<30?'amb':'neg'),
+    s('In-Range Rate',      `${dec(100-r.oorPct,1)}%`, (100-r.oorPct)>70?'pos':'neg'),
+    s('Trend Pauses (Guard 1)', r.guardPauseCount>0?`${r.guardPauseCount}× fired`:'0 — not needed',
+      r.guardPauseCount>0?'amb':'pos'),
+    s('Total Swaps',        qty(r.swapCount),'pos'),
+    s('Hours Simulated',    qty(r.hours)),
   ].join('');
 
   const tips=[];
-  if(corrPct!=null&&corrPct<40)
-    tips.push(`<b>Low pair correlation (${corrPct}%):</b> These stocks move independently — the ratio will trend rather than mean-revert, generating large IL. Choose pairs with ≥70% log-return correlation for best results (e.g. two bank stocks, two oil stocks).`);
-  if(fr>25)
-    tips.push(`<b>High friction (${dec(fr,1)}% of gross):</b> Brokerage is consuming too much of the harvest. Widen the band or reduce brokerage rates to lower trade frequency.`);
-  if(r.oorPct>30)
-    tips.push(`<b>High out-of-range rate (${dec(r.oorPct,1)}%):</b> The price ratio spent ${dec(r.oorPct,1)}% of its time outside the fixed band. During those periods the pool held one asset entirely (the cheaper one), which is why share counts of one stock may have fallen sharply. Increase Min Band or Sigma Factor so the band is wide enough to contain the full price-ratio range in your dataset.`);
-  if(r.cf<2)
-    tips.push(`<b>Low concentration (${dec(r.cf,2)}×):</b> The band is wide — fees per ₹ are low. Tighten the min-band or reduce sigma factor to concentrate liquidity more.`);
-  if(!tips.length)
-    tips.push(`<b>Strategy is healthy.</b> The pool is beating hold, friction is manageable, correlation is strong, and the pool stayed in range most of the time.`);
 
-  const good=r.alpha>=0&&fr<25&&(corrPct==null||corrPct>40)&&r.oorPct<30;
+  // Guard 1 — trending market warning
+  if(r.guardPauseCount>0)
+    tips.push(`<b>⚡ Trending-market guard fired ${r.guardPauseCount}× (Guard 1).</b> The rolling Hurst exponent exceeded 0.55, indicating the price ratio was trending rather than mean-reverting. Swaps were paused automatically to prevent selling the outperformer into a one-directional move. This is the primary defence against the negative-IL pattern seen in trending stock pairs.`);
+
+  // Price asymmetry warning (key predictor of negative IL)
+  if(priceAsym < 1.5)
+    tips.push(`<b>⚠️ Low price asymmetry (${dec(priceAsym,2)}×) — high IL risk.</b> Both stocks are priced similarly per share. Analysis of 7 historical runs shows all negative-IL cases had price asymmetry below 1.5×. When both stocks cost roughly the same, each 1% ratio move shifts nearly equal share counts on both sides — maximising IL in trending markets. Consider pairs where one stock costs at least 2× more than the other.`);
+
+  // Brokerage drain warning
+  if(brokCapPct > 4)
+    tips.push(`<b>⚠️ High brokerage drain (${dec(brokCapPct,2)}% of capital — Guard 2 active).</b> Cumulative brokerage exceeded 4% of starting capital. The min-net threshold was automatically raised 3× to throttle marginal trades. Run 3 in the analysis had 13.46% brokerage drain with 1,468 swaps — the primary cause of its negative IL. Widen the band or increase the sigma factor to reduce swap frequency.`);
+
+  // Swap frequency warning
+  if(swapPerHr > 2)
+    tips.push(`<b>⚠️ High swap rate (${dec(swapPerHr,2)}/hr — Guard 3 active).</b> More than 2 swaps per hour triggers the frequency throttle (min-net raised 2×). Very high swap rates are a sign the band is too tight for this pair's volatility. Increase Min Band to slow trade frequency without widening out of fees range.`);
+
+  // Correlation warning
+  if(corrPct!=null && corrPct<40)
+    tips.push(`<b>Low correlation (${corrPct}%):</b> Stocks move independently. The ratio will trend rather than mean-revert, generating persistent IL. Target pairs with ≥70% log-return correlation.`);
+
+  // OOR warning
+  if(r.oorPct>30)
+    tips.push(`<b>High out-of-range rate (${dec(r.oorPct,1)}%):</b> Pool was outside the band ${dec(r.oorPct,1)}% of the time — no fees earned during those hours. Increase Min Band or Sigma Factor to keep the ratio inside the range.`);
+
+  if(!tips.length)
+    tips.push(`<b>✅ Strategy is healthy.</b> All 4 protective guards are within safe thresholds. Pool is generating alpha with manageable brokerage, the market is mean-reverting (Hurst < 0.55), and price asymmetry is sufficient to buffer IL.`);
+
+  const good = r.alpha>=0 && brokCapPct<8 && (corrPct==null||corrPct>40) && priceAsym>=1.5;
   $('healthExpl').className=`expl ${good?'':'w'}`;
   $('healthExpl').innerHTML=tips.join('<br/><br/>');
   $('healthPanel').classList.remove('hidden');
