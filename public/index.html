@@ -339,8 +339,9 @@ table.ht .reb-r td{background:rgba(245,158,11,.04)}
 
   <div id="chartPanel" class="panel hidden">
     <div class="ph">
-      <div class="ptitle">Portfolio Value Over Time
-        <span class="psub">Pool Total · Hold · Band boundaries · Reinvestment events</span>
+      <div class="ptitle">Portfolio Value Over Time —
+        <span id="pairHeading" style="color:var(--amber)">Reliance ↔ Kotak Bank</span>
+        <span class="psub"> · Pool Total · Hold · Reinvestment events</span>
       </div>
     </div>
     <div class="cw"><canvas id="chart"></canvas></div>
@@ -563,7 +564,12 @@ function runSimulation(rows1,rows2,capital,cfg){
   let reinvestCount=0, reinvestNormalCount=0, reinvestRebalCount=0;
   let xAdded=0, yAdded=0, reinvestedCap=0;
 
-  const lr1=[], lr2=[];   // log-returns for correlation
+  // ── Event arrays (were missing — root cause of "curve is not defined") ──
+  const swaps     = [];   // every profitable swap record
+  const reinvests = [];   // every reinvestment record
+  const curve     = [];   // hourly equity snapshot for chart
+  const logRatios = [];   // rolling ratio log-returns → Hurst calculation
+  const lr1=[], lr2=[];   // individual asset log-returns → pair correlation
   // ── Protective guard state ───────────────────────────────────────
   // Guard 1 — Hurst trending pause: if rolling Hurst > 0.55 (trending
   //   regime detected), pause swaps until it drops below 0.48.
@@ -593,10 +599,14 @@ function runSimulation(rows1,rows2,capital,cfg){
     const{date,c1:p1,c2:p2}=hourly[i];
     const r=p1/p2;
 
-    // Track log-returns for final correlation stat
-    if(i>0&&hourly[i-1].c1>0&&hourly[i-1].c2>0){
-      lr1.push(Math.log(p1/hourly[i-1].c1));
-      lr2.push(Math.log(p2/hourly[i-1].c2));
+    // Track log-returns for correlation and Hurst
+    if(i>0 && hourly[i-1].c1>0 && hourly[i-1].c2>0){
+      const dlr1 = Math.log(p1/hourly[i-1].c1);
+      const dlr2 = Math.log(p2/hourly[i-1].c2);
+      lr1.push(dlr1);
+      lr2.push(dlr2);
+      logRatios.push(dlr1 - dlr2);          // log(ratio_t / ratio_t-1)
+      if(logRatios.length > 168) logRatios.shift(); // keep 1 week rolling
     }
 
     // ── GUARD 1: Hurst trending detection ─────────────────────────
@@ -1143,8 +1153,43 @@ $('kSig').oninput=updateBandInfo;
 updateBandInfo();
 
 // ── File labels ───────────────────────────────────────────────
-$('file1').onchange=()=>{$('fname1').textContent=$('file1').files[0]?.name||''};
-$('file2').onchange=()=>{$('fname2').textContent=$('file2').files[0]?.name||''};
+// ── Heading sync ─────────────────────────────────────────────────────────
+function updateHeading(){
+  const l1 = $('label1').value || 'Asset 1';
+  const l2 = $('label2').value || 'Asset 2';
+  const el = $('pairHeading');
+  if(el) el.textContent = `${l1} \u2194 ${l2}`;
+}
+$('label1').addEventListener('input', updateHeading);
+$('label2').addEventListener('input', updateHeading);
+updateHeading();
+
+// ── Auto-extract stock name from filename ─────────────────────────────────
+function stockNameFromFile(filename){
+  return (filename || '')
+    .replace(/\.(csv|xlsx|txt)$/i,'')          // drop extension
+    .replace(/_?(1m|5m|15m|30m|1h|2h|4h|daily|hourly|min|minute|hr|weekly).*$/i,'') // drop timeframe
+    .replace(/[_\-\.]+/g,' ')                  // separators → spaces
+    .replace(/\b\w/g, c => c.toUpperCase())    // Title Case
+    .trim() || 'Asset';
+}
+
+$('file1').onchange=()=>{
+  const f = $('file1').files[0];
+  if(!f) return;
+  $('fname1').textContent = f.name;
+  const name = stockNameFromFile(f.name);
+  if(name && name !== 'Asset') $('label1').value = name;
+  updateHeading();
+};
+$('file2').onchange=()=>{
+  const f = $('file2').files[0];
+  if(!f) return;
+  $('fname2').textContent = f.name;
+  const name = stockNameFromFile(f.name);
+  if(name && name !== 'Asset') $('label2').value = name;
+  updateHeading();
+};
 $('dlBtn').onclick=()=>{if(ST.r) dlCsv(ST.swaps,ST.reinvests)};
 
 // ── Run ───────────────────────────────────────────────────────
