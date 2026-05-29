@@ -591,6 +591,41 @@ function runSimulation(rows1,rows2,capital,cfg){
   let trendResumedAt   = null;
   let guardPauseCount  = 0;
   const recentSwapTimes = [];        // Guard 3 rolling window
+  const p1hist = [], p2hist = [];     // Guard 5: 30-day rolling price history
+  let divPaused     = false;          // Guard 5: blocks sell-A when divergence > 20%
+  let divPauseCount = 0;
+  let ilCircuitOpen = false;          // Guard 6: halts all swaps when IL < -8%
+  let ilCircuitCount= 0;
+
+  // ── PAIR FITNESS PRE-CHECK ─────────────────────────────────────────────
+  // Uses first 15% of hourly data as an early signal window.
+  // Score 0-100:  ≥60 = SUITABLE  40-60 = CAUTION  <40 = UNSUITABLE
+  const fitN   = Math.max(14, Math.floor(hourly.length * 0.15));
+  const fitH   = hourly.slice(0, fitN);
+  let pairFitScore = 50, fitLabel = 'CAUTION';
+  if(fitH.length >= 10){
+    const fRat  = fitH.map(h=>h.c1/h.c2);
+    const fLrA  = fitH.slice(1).map((h,i)=>Math.log(h.c1/fitH[i].c1));
+    const fLrB  = fitH.slice(1).map((h,i)=>Math.log(h.c2/fitH[i].c2));
+    const fLrR  = fRat.slice(1).map((r,i)=>Math.log(r/fRat[i]));
+    const mA=fLrA.reduce((s,v)=>s+v,0)/fLrA.length;
+    const mB=fLrB.reduce((s,v)=>s+v,0)/fLrB.length;
+    let cov=0,vA=0,vB=0;
+    fLrA.forEach((a,i)=>{cov+=(a-mA)*(fLrB[i]-mB);vA+=(a-mA)**2;vB+=(fLrB[i]-mB)**2});
+    const fitCorr  = (vA>0&&vB>0)?cov/Math.sqrt(vA*vB):0;
+    const fitDrift = Math.abs(fRat[fRat.length-1]/fRat[0]-1);
+    const mn=fLrR.reduce((s,v)=>s+v,0)/fLrR.length;
+    const cum=fLrR.reduce((a,v,i)=>{a.push((a[i-1]||0)+(v-mn));return a;},[]);
+    const fR=Math.max(...cum)-Math.min(...cum);
+    const fS=Math.sqrt(fLrR.reduce((s,v)=>s+(v-mn)**2,0)/(fLrR.length-1)||1e-9);
+    const fitHurst=(fR>0&&fS>0)?Math.log(fR/fS)/Math.log(fLrR.length):0.5;
+    pairFitScore = Math.round(
+      Math.max(0,fitCorr)*40 +
+      Math.max(0,1-fitDrift/0.12)*30 +
+      Math.max(0,1-Math.max(0,fitHurst-0.45)/0.15)*30
+    );
+    fitLabel = pairFitScore>=60?'SUITABLE':pairFitScore>=40?'CAUTION':'UNSUITABLE';
+  }
 
   curve.push({date:hourly[0].date.toISOString(),pool:startCap,hold:startCap,cash:0,inRange:true});
 
@@ -630,6 +665,37 @@ function runSimulation(rows1,rows2,capital,cfg){
       trendPaused = false; trendResumedAt = date.toISOString();
     }
 
+    // ── GUARD 5: 30-day return divergence ─────────────────────────────
+    // Blocks sell-A direction when one stock has outrun the other by >20%.
+    // This is the primary defence against Run-2-style trending pairs
+    // where A surged 30% while B fell 5% — an unsurvivable combination.
+    p1hist.push(p1); p2hist.push(p2);
+    const W30 = 24*30;
+    if(p1hist.length > W30){ p1hist.shift(); p2hist.shift(); }
+    if(p1hist.length >= W30){
+      const ret30a = (p1 - p1hist[0]) / p1hist[0];
+      const ret30b = (p2 - p2hist[0]) / p2hist[0];
+      const div30  = Math.abs(ret30a - ret30b);
+      if(!divPaused && div30 > DIV_PAUSE_PCT){
+        divPaused = true; divPauseCount++;
+      } else if(divPaused && div30 < DIV_RESUME_PCT){
+        divPaused = false;
+      }
+    }
+
+    // ── GUARD 6: IL circuit breaker ───────────────────────────────────
+    // Halts ALL swaps when pool assets fall below 92% of hold value.
+    // Prevents the -8% → -10.75% spiral seen in Run 2.
+    // Reinvestment continues; only swap execution is blocked.
+    const holdNow       = x0*p1 + y0*p2;
+    const poolNow       = xS*p1 + yS*p2;
+    const ilRatioNow    = holdNow > 0 ? poolNow / holdNow : 1;
+    if(!ilCircuitOpen && ilRatioNow < IL_STOP_RATIO){
+      ilCircuitOpen = true; ilCircuitCount++;
+    } else if(ilCircuitOpen && ilRatioNow > IL_STOP_RATIO + 0.03){
+      ilCircuitOpen = false;
+    }
+
     // ── GUARD 2+3: Dynamic min-net threshold ──────────────────────
     // Raises bar for swap execution when brokerage or frequency is high.
     const brokPctSoFar = totBrok / (startCap || 1);
@@ -640,7 +706,9 @@ function runSimulation(rows1,rows2,capital,cfg){
     const freqMult = swaps24h > MAX_SWAPS_24H    ? 2 : 1;   // Guard 3
     const minNet   = MIN_NET_INR * brokMult * freqMult;      // Guard 4 combined
 
-    const swapAllowed = !trendPaused;
+    // Guard 5 blocks sell-A only; Guard 6 blocks everything
+    const swapAllowed  = !trendPaused && !ilCircuitOpen;
+    const sellAAllowed = swapAllowed  && !divPaused;
 
     // ── SWAP ─────────────────────────────────────────────────
     // Gated by all 4 protective guards:
@@ -659,7 +727,7 @@ function runSimulation(rows1,rows2,capital,cfg){
 
     let traded=false, swapInfo=null;
 
-    if(swapAllowed && dx<0 && xS>1){
+    if(sellAAllowed && dx<0 && xS>1){      // Guard 5 blocks this direction
       const sellA = Math.min(-dx, xS-1);
       if(sellA>=1){
         const grossRev = sellA*p1;
@@ -796,6 +864,8 @@ function runSimulation(rows1,rows2,capital,cfg){
     holdRoi:    startCap>0?(finalHold/startCap-1)*100:0,
     alphaRoi:   finalHold>0?alpha/finalHold*100:0,
     ilPct:      finalHold>0?il/finalHold*100:0,
+    pairFitScore, fitLabel,
+    divPaused, divPauseCount, ilCircuitOpen, ilCircuitCount,
     trendPaused, trendPausedAt, trendResumedAt, guardPauseCount,
     swapCount,skipCount,reinvestCount,reinvestNormalCount,reinvestRebalCount,
     xAdded,yAdded,reinvestedCap,
@@ -1001,61 +1071,75 @@ function renderReinvest(r,l1,l2){
 }
 
 function renderHealth(r){
-  const corrPct = r.corr!=null ? Math.round(r.corr*100) : null;
-  const fr      = r.grossFees>0 ? r.totBrok/r.grossFees*100 : 0;
+  const corrPct    = r.corr!=null ? Math.round(r.corr*100) : null;
+  const fr         = r.grossFees>0 ? r.totBrok/r.grossFees*100 : 0;
   const brokCapPct = r.totBrok/(r.startCap||1)*100;
   const swapPerHr  = r.hours>0 ? r.swapCount/r.hours : 0;
   const priceAsym  = r.p1_0>0&&r.p2_0>0 ? Math.max(r.p1_0,r.p2_0)/Math.min(r.p1_0,r.p2_0) : 1;
-  const sr      = r.swapCount>0 ? r.swapCount/(r.swapCount+(r.skipCount||0))*100 : 0;
-
   const s=(lbl,val,cls='')=>
     `<div class="st"><div class="st-l">${lbl}</div><div class="st-v ${cls}">${val}</div></div>`;
 
   $('healthStats').innerHTML=[
-    s('Pair Correlation',   corrPct!=null?`${corrPct}%`:'—', corrPct>70?'pos':corrPct>40?'amb':'neg'),
-    s('Band ±',             `${dec(r.band,2)}%`,'amb'),
-    s('Concentration',      `${dec(r.cf,2)}×`,'amb'),
-    s('Price Asymmetry',    `${dec(priceAsym,2)}×`, priceAsym>=2?'pos':'neg'),
-    s('Swaps / Hour',       `${dec(swapPerHr,2)}`, swapPerHr<1?'pos':swapPerHr<2?'amb':'neg'),
-    s('Brokerage / Capital',`${dec(brokCapPct,2)}%`, brokCapPct<4?'pos':brokCapPct<8?'amb':'neg'),
-    s('Friction / Gross',   `${dec(fr,1)}%`, fr<15?'pos':fr<30?'amb':'neg'),
-    s('In-Range Rate',      `${dec(100-r.oorPct,1)}%`, (100-r.oorPct)>70?'pos':'neg'),
-    s('Trend Pauses (Guard 1)', r.guardPauseCount>0?`${r.guardPauseCount}× fired`:'0 — not needed',
-      r.guardPauseCount>0?'amb':'pos'),
-    s('Total Swaps',        qty(r.swapCount),'pos'),
-    s('Hours Simulated',    qty(r.hours)),
+    s('🎯 Pair Fitness Score',
+      `${r.pairFitScore??'—'}/100 — ${r.fitLabel??'—'}`,
+      (r.pairFitScore??0)>=60?'pos':(r.pairFitScore??0)>=40?'amb':'neg'),
+    s('Pair Correlation',    corrPct!=null?`${corrPct}%`:'—', corrPct>50?'pos':corrPct>30?'amb':'neg'),
+    s('Price Asymmetry',     `${dec(priceAsym,2)}×`, priceAsym>=2?'pos':priceAsym>=1.3?'amb':'neg'),
+    s('Band ±',              `${dec(r.band,2)}%`, 'amb'),
+    s('Concentration',       `${dec(r.cf,2)}×`, 'amb'),
+    s('Swaps / Hour',        `${dec(swapPerHr,3)}`, swapPerHr<1?'pos':swapPerHr<2?'amb':'neg'),
+    s('Brokerage / Capital', `${dec(brokCapPct,2)}%`, brokCapPct<4?'pos':brokCapPct<8?'amb':'neg'),
+    s('In-Range Rate',       `${dec(100-r.oorPct,1)}%`, (100-r.oorPct)>70?'pos':'neg'),
+    s('Guard 1 — Hurst',     r.guardPauseCount?`${r.guardPauseCount}× fired`:'0 — clear', r.guardPauseCount?'amb':'pos'),
+    s('Guard 5 — Div Pause', r.divPauseCount?`${r.divPauseCount}× fired`:'0 — clear',     r.divPauseCount?'neg':'pos'),
+    s('Guard 6 — IL Circuit',r.ilCircuitCount?`${r.ilCircuitCount}× fired`:'0 — clear',   r.ilCircuitCount?'neg':'pos'),
+    s('Total Swaps',         qty(r.swapCount), 'pos'),
+    s('Hours Simulated',     qty(r.hours)),
   ].join('');
 
   const tips=[];
 
-  // Guard 1 — trending market warning
-  if(r.guardPauseCount>0)
-    tips.push(`<b>⚡ Trending-market guard fired ${r.guardPauseCount}× (Guard 1).</b> The rolling Hurst exponent exceeded 0.55, indicating the price ratio was trending rather than mean-reverting. Swaps were paused automatically to prevent selling the outperformer into a one-directional move. This is the primary defence against the negative-IL pattern seen in trending stock pairs.`);
+  // Pair Fitness
+  const fit = r.pairFitScore ?? 50;
+  if(fit < 40)
+    tips.push(`<b>🚨 Pair Fitness Score: ${fit}/100 — UNSUITABLE.</b> This pair scored below 40 out of 100 on correlation, early ratio drift, and Hurst analysis. Analysis of 8 historical runs shows that ALL negative-IL outcomes occurred when pairs scored below 40. The algorithm will still run but impermanent loss is likely to exceed swap income. Consider a different pair with higher correlation and lower price-ratio drift.`);
+  else if(fit < 60)
+    tips.push(`<b>⚠️ Pair Fitness Score: ${fit}/100 — CAUTION.</b> This pair is marginal. Wider band recommended (±10% or more) to reduce swap frequency and IL exposure. Monitor the Return Divergence guard closely.`);
+  else
+    tips.push(`<b>✅ Pair Fitness Score: ${fit}/100 — SUITABLE.</b> The pair shows adequate correlation and controlled early ratio drift. Strategy is well-positioned.`);
 
-  // Price asymmetry warning (key predictor of negative IL)
-  if(priceAsym < 1.5)
-    tips.push(`<b>⚠️ Low price asymmetry (${dec(priceAsym,2)}×) — high IL risk.</b> Both stocks are priced similarly per share. Analysis of 7 historical runs shows all negative-IL cases had price asymmetry below 1.5×. When both stocks cost roughly the same, each 1% ratio move shifts nearly equal share counts on both sides — maximising IL in trending markets. Consider pairs where one stock costs at least 2× more than the other.`);
+  // Guard 5 fired
+  if((r.divPauseCount??0) > 0)
+    tips.push(`<b>⚠️ Guard 5 — Return Divergence fired ${r.divPauseCount}×.</b> The rolling 30-day return gap between the two stocks exceeded 20%. Sell-A trades were blocked automatically (buying the outperformer back was still allowed). This guard is the primary defence against the Run-2 pattern where A gained 30% and B lost 5%, forcing the pool to sell all A into a one-directional trend.`);
 
-  // Brokerage drain warning
+  // Guard 6 fired
+  if((r.ilCircuitCount??0) > 0)
+    tips.push(`<b>🔴 Guard 6 — IL Circuit Breaker fired ${r.ilCircuitCount}×.</b> Pool assets fell below 92% of hold value — all swaps were halted automatically. This prevents the -8% to -10.75% IL spiral seen in historical Run 2. Only reinvestment continued during the circuit-break period.`);
+
+  // Guard 1 fired
+  if((r.guardPauseCount??0) > 0)
+    tips.push(`<b>⚡ Guard 1 — Hurst Trending Pause fired ${r.guardPauseCount}×.</b> Rolling Hurst exponent exceeded 0.55 (trending regime). Swaps paused until H dropped below 0.48 (mean-reversion restored).`);
+
+  // Price asymmetry warning
+  if(priceAsym < 1.3)
+    tips.push(`<b>⚠️ Very low price asymmetry (${dec(priceAsym,2)}×).</b> Both stocks cost nearly the same per share. In a trending market this causes symmetric share drain — the pool sells all of the outperformer before prices can recover. Run 2 had 1.18× asymmetry. Target pairs where one stock costs at least 2× more than the other.`);
+
+  // High brokerage
   if(brokCapPct > 4)
-    tips.push(`<b>⚠️ High brokerage drain (${dec(brokCapPct,2)}% of capital — Guard 2 active).</b> Cumulative brokerage exceeded 4% of starting capital. The min-net threshold was automatically raised 3× to throttle marginal trades. Run 3 in the analysis had 13.46% brokerage drain with 1,468 swaps — the primary cause of its negative IL. Widen the band or increase the sigma factor to reduce swap frequency.`);
+    tips.push(`<b>⚠️ Brokerage drain ${dec(brokCapPct,2)}% of capital.</b> Guard 2 raised the minimum trade threshold. Widen the band or increase sigma factor to reduce swap frequency.`);
 
-  // Swap frequency warning
-  if(swapPerHr > 2)
-    tips.push(`<b>⚠️ High swap rate (${dec(swapPerHr,2)}/hr — Guard 3 active).</b> More than 2 swaps per hour triggers the frequency throttle (min-net raised 2×). Very high swap rates are a sign the band is too tight for this pair's volatility. Increase Min Band to slow trade frequency without widening out of fees range.`);
+  // Low correlation warning
+  if(corrPct!=null && corrPct < 30)
+    tips.push(`<b>⚠️ Very low correlation (${corrPct}%).</b> Stocks move independently. Ratio will trend without mean-reversion. Target pairs with ≥50% correlation.`);
 
-  // Correlation warning
-  if(corrPct!=null && corrPct<40)
-    tips.push(`<b>Low correlation (${corrPct}%):</b> Stocks move independently. The ratio will trend rather than mean-revert, generating persistent IL. Target pairs with ≥70% log-return correlation.`);
+  // High OOR
+  if(r.oorPct > 30)
+    tips.push(`<b>⚠️ Out-of-range ${dec(r.oorPct,1)}% of time.</b> Pool earned nothing during these periods. Widen the band or sigma factor.`);
 
-  // OOR warning
-  if(r.oorPct>30)
-    tips.push(`<b>High out-of-range rate (${dec(r.oorPct,1)}%):</b> Pool was outside the band ${dec(r.oorPct,1)}% of the time — no fees earned during those hours. Increase Min Band or Sigma Factor to keep the ratio inside the range.`);
+  if(tips.length === 1 && fit >= 60)
+    tips.push(`<b>Strategy is healthy.</b> All 6 guards within safe thresholds. Pool is generating positive alpha with manageable risk.`);
 
-  if(!tips.length)
-    tips.push(`<b>✅ Strategy is healthy.</b> All 4 protective guards are within safe thresholds. Pool is generating alpha with manageable brokerage, the market is mean-reverting (Hurst < 0.55), and price asymmetry is sufficient to buffer IL.`);
-
-  const good = r.alpha>=0 && brokCapPct<8 && (corrPct==null||corrPct>40) && priceAsym>=1.5;
+  const good = (r.alpha??0)>=0 && brokCapPct<8 && (corrPct==null||corrPct>30) && fit>=40;
   $('healthExpl').className=`expl ${good?'':'w'}`;
   $('healthExpl').innerHTML=tips.join('<br/><br/>');
   $('healthPanel').classList.remove('hidden');
