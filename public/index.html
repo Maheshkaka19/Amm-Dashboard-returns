@@ -268,39 +268,11 @@ table.ht .reb-r td{background:rgba(245,158,11,.04)}
   </div>
 
   <div class="sb">
-    <h3>Concentration Band</h3>
-    <p class="fhint" style="margin-bottom:12px">Band is set <b style="color:var(--amber)">once</b> at initialisation from the opening price ratio. It <b style="color:var(--amber)">never moves</b>. When price exits the band, the pool holds its position and waits — no forced rebalancing.</p>
-    <label class="tog">
-      <input id="dynBand" type="checkbox" checked/>
-      Auto-size band from data volatility
-    </label>
-    <div id="fixedBandRow" class="field hidden">
-      <label>Fixed Band ±%</label>
-      <input id="fixedBand" type="number" min="1" max="80" step="1" value="20"/>
-    </div>
-    <div class="two">
-      <div class="field"><label>Min Band ±%</label>
-        <input id="minBand" type="number" min="1" max="40" step="0.5" value="8"/>
-      </div>
-      <div class="field"><label>Max Band ±%</label>
-        <input id="maxBand" type="number" min="5" max="80" step="1" value="30"/>
-      </div>
-    </div>
-    <div class="two">
-      <div class="field"><label>Vol Lookback (hrs)</label>
-        <input id="volLB" type="number" min="4" max="168" step="4" value="24"/>
-      </div>
-      <div class="field"><label>Sigma factor (k)</label>
-        <input id="kSig" type="number" min="0.5" max="5" step="0.1" value="2.0"/>
-      </div>
-    </div>
-    <div class="band-info" id="bandInfo">
-      <div class="bi-row"><span class="bi-label">Band width</span><span class="bi-val" id="biWidth">—</span></div>
-      <div class="bi-row"><span class="bi-label">Concentration</span><span class="bi-val" id="biConc">—</span></div>
-      <div class="bi-row"><span class="bi-label">vs full-range</span><span class="bi-val" id="biAmp">—</span></div>
-    </div>
-  </div>
-
+    <h3>Dynamic Auto-Band</h3>
+    <p class="fhint" style="margin-bottom:12px">
+      Band width <b style="color:var(--amber)">adapts every hour</b> — tightens for max alpha in calm balanced markets, widens to protect inventory when one asset depletes or ratio drifts far from centre.<br/><br/>
+      The centre is <b style="color:var(--amber)">permanently locked</b> at the opening price ratio. No recentering ever.
+    </p>
   <div class="sb">
     <h3>Brokerage</h3>
     <div class="two">
@@ -539,12 +511,18 @@ function runSimulation(rows1,rows2,capital,cfg){
     band = cl(+(cfg.fixedBand??20),1,80)/100;
   }
 
-  // ── STEP 2: Set fixed band — PERMANENT for entire simulation ─
+  // ── STEP 2: Fixed CENTER rC — band WIDTH adapts every hour ───────────────
+  // rC = opening price ratio. Never moves. No recentering ever.
+  // rL and rH are recomputed each hour by the dynamic band formula:
+  //   Component 1 (vol):       tight in calm → high concentration → max alpha
+  //   Component 2 (imbalance): widens when one asset depleted → prevents drain
+  //   Component 3 (deviation): widens if ratio drifted from rC → stays in range
   const { c1:p1_0, c2:p2_0 } = hourly[0];
-  const rC = p1_0 / p2_0;               // opening ratio — fixed center
-  const rL = rC * (1 - band);           // lower bound — NEVER changes
-  const rH = rC * (1 + band);           // upper bound — NEVER changes
-  const cf = concFactor(band);          // concentration factor — fixed
+  const rC = p1_0 / p2_0;               // opening ratio — PERMANENT centre
+  let rL = rC * (1 - band);             // initialised from first-window vol; updated each hour
+  let rH = rC * (1 + band);             // same
+  let b_current = band;                  // current hour's effective band width
+  let sumBand = 0, minBandSeen = 1, maxBandSeen = 0, sumConc = 0;
 
   // ── STEP 3: Initialise pool ──────────────────────────────────
   let L = computeL(capital, p1_0, p2_0, rC, rL, rH);
@@ -642,6 +620,36 @@ function runSimulation(rows1,rows2,capital,cfg){
       lr2.push(dlr2);
       logRatios.push(dlr1 - dlr2);          // log(ratio_t / ratio_t-1)
       if(logRatios.length > 168) logRatios.shift(); // keep 1 week rolling
+    }
+
+    // ── DYNAMIC BAND (runs every hour before any guard or swap) ─────────
+    // CENTER rC is fixed at opening ratio — no recentering.
+    // WIDTH b_dyn = max(vol_component, deviation_component) + imbalance_component
+    {
+      // Component 1: volatility (primary driver — tight=concentrated=more alpha)
+      const vol_c   = logRatios.length>=4
+        ? kSig * stdDev(logRatios.slice(-Math.min(volLB, logRatios.length)))
+        : minBand;
+      // Component 2: inventory imbalance (widens when one side depleted)
+      const valA_d  = xS*p1, valB_d = yS*p2, tot_d = valA_d+valB_d;
+      const imb_d   = tot_d>0 ? Math.abs(valA_d-valB_d)/tot_d : 0;
+      // imb_d: 0=perfect 50/50, 1=all in one asset → add up to 40% of maxBand
+      const imb_c   = imb_d * maxBand * 0.4;
+      // Component 3: ratio deviation from fixed center (guarantees in-range)
+      const dev_c   = rC>0 ? Math.abs(r-rC)/rC * 1.5 : 0;
+      // Combine: worst-case of vol/deviation + imbalance buffer, then clamp
+      b_current     = cl(Math.max(vol_c, dev_c) + imb_c, minBand, maxBand);
+      rL = rC * (1 - b_current);
+      rH = rC * (1 + b_current);
+      // Recompute L from current pool value at this hour's band
+      // (L grows via reinvestment; band change only reshapes concentration)
+      const pv = xS*p1 + yS*p2;
+      if(pv > 0) L = computeL(pv, p1, p2, cl(r, rL, rH), rL, rH);
+      // Accumulate band stats
+      sumBand += b_current;
+      if(b_current < minBandSeen) minBandSeen = b_current;
+      if(b_current > maxBandSeen) maxBandSeen = b_current;
+      sumConc += concFactor(b_current);
     }
 
     // ── GUARD 1: Hurst trending detection ─────────────────────────
@@ -843,7 +851,7 @@ function runSimulation(rows1,rows2,capital,cfg){
       date:date.toISOString(),
       pool:xS*p1+yS*p2+cash,
       hold:x0*p1+y0*p2,
-      cash, inRange
+      cash, inRange, band:b_current*100
     });
   }
 
@@ -871,7 +879,11 @@ function runSimulation(rows1,rows2,capital,cfg){
     xAdded,yAdded,reinvestedCap,
     x0,y0,xF:xS,yF:yS,p1_0,p2_0,pF1,pF2,
     hours:hourly.length,oorHours,oorPct,
-    band:band*100,rL,rH,rC,cf,corr,
+    band:       n>0?sumBand/n*100:band*100,
+    minBandSeen: minBandSeen*100,
+    maxBandSeen: maxBandSeen*100,
+    avgConc:     n>0?sumConc/n:concFactor(band),
+    rL,rH,rC,corr,
   }};
 }
 
@@ -988,8 +1000,8 @@ function renderMetrics(r){
 function renderReinvest(r,l1,l2){
   const s=(lbl,val,cls='')=>`<div class="st"><div class="st-l">${lbl}</div><div class="st-v ${cls}">${val}</div></div>`;
   $('reinvStats').innerHTML=[
-    s('Fixed Band ±',               `${dec(r.band,2)}%`,'amb'),
-    s('Concentration Factor',       `${dec(r.cf,2)}×`,'amb'),
+    s('Avg Band ±',                `${dec(r.band,2)}% [${dec(r.minBandSeen,1)}–${dec(r.maxBandSeen,1)}]`,'amb'),
+    s('Avg Concentration',         `${dec(r.avgConc??r.cf,2)}×`,'amb'),
     s('In-Range Hours',             `${dec(100-r.oorPct,1)}%`,(100-r.oorPct)>70?'pos':'neg'),
     s('Out-of-Range Hours',         `${dec(r.oorPct,1)}%`,r.oorPct>30?'neg':'mut'),
     s('🔄 Normal Reinvestments',    r.reinvestNormalCount?`${r.reinvestNormalCount}×`:'None', r.reinvestNormalCount?'pos':'mut'),
@@ -1085,8 +1097,8 @@ function renderHealth(r){
       (r.pairFitScore??0)>=60?'pos':(r.pairFitScore??0)>=40?'amb':'neg'),
     s('Pair Correlation',    corrPct!=null?`${corrPct}%`:'—', corrPct>50?'pos':corrPct>30?'amb':'neg'),
     s('Price Asymmetry',     `${dec(priceAsym,2)}×`, priceAsym>=2?'pos':priceAsym>=1.3?'amb':'neg'),
-    s('Band ±',              `${dec(r.band,2)}%`, 'amb'),
-    s('Concentration',       `${dec(r.cf,2)}×`, 'amb'),
+    s('Band ± (avg)',        `${dec(r.band,2)}% [${dec(r.minBandSeen,1)}–${dec(r.maxBandSeen,1)}]`, 'amb'),
+    s('Avg Concentration',  `${dec(r.avgConc??r.cf,2)}×`, 'amb'),
     s('Swaps / Hour',        `${dec(swapPerHr,3)}`, swapPerHr<1?'pos':swapPerHr<2?'amb':'neg'),
     s('Brokerage / Capital', `${dec(brokCapPct,2)}%`, brokCapPct<4?'pos':brokCapPct<8?'amb':'neg'),
     s('In-Range Rate',       `${dec(100-r.oorPct,1)}%`, (100-r.oorPct)>70?'pos':'neg'),
