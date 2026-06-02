@@ -270,9 +270,12 @@ table.ht .reb-r td{background:rgba(245,158,11,.04)}
   <div class="sb">
     <h3>Dynamic Auto-Band</h3>
     <p class="fhint" style="margin-bottom:12px">
-      Band width <b style="color:var(--amber)">adapts every hour</b> — tightens for max alpha in calm balanced markets, widens to protect inventory when one asset depletes or ratio drifts far from centre.<br/><br/>
-      The centre is <b style="color:var(--amber)">permanently locked</b> at the opening price ratio. No recentering ever.
+      Band width <b style="color:var(--amber)">adapts every hour</b> — tightens for max alpha in calm markets, widens to protect inventory when one asset is depleted or ratio drifts from centre.<br/>
+      Centre is <b style="color:var(--amber)">permanently locked</b> at the opening ratio. No recentering ever.
     </p>
+    <input id="dynBand"      type="checkbox" checked style="display:none"/>
+    <input id="fixedBand"    type="number"   value="20" style="display:none"/>
+    <input id="fixedBandRow" type="hidden"/>
   <div class="sb">
     <h3>Brokerage</h3>
     <div class="two">
@@ -298,6 +301,10 @@ table.ht .reb-r td{background:rgba(245,158,11,.04)}
     Fires every hour regardless of whether pool is in or out of range.</p>
   </div>
 
+  <!-- Hidden inputs kept for JS compatibility -->
+  <input id="dynBand"      type="checkbox" checked style="display:none"/>
+  <input id="fixedBand"    type="number"   value="20" style="display:none"/>
+  <input id="fixedBandRow" type="hidden"/>
   <button class="run-btn" id="runBtn">▶ Run Simulation</button>
 </aside>
 
@@ -1229,23 +1236,11 @@ function dlCsv(swaps,reinvests){
 
 // ── Band info preview ──────────────────────────────────────────
 function updateBandInfo(){
-  const dynOn=$('dynBand').checked;
-  $('fixedBandRow').classList.toggle('hidden',dynOn);
-  const b=dynOn?null:+(($('fixedBand').value)||20)/100;
-  if(b){
-    const cf=concFactor(b);
-    $('biWidth').textContent=`±${dec(b*100,1)}%`;
-    $('biConc').textContent=`${dec(cf,2)}×`;
-    $('biAmp').textContent=`${dec(cf,1)}× more fees vs full-range`;
-  } else {
-    $('biWidth').textContent='Set from data σ';
-    $('biConc').textContent='Computed at runtime';
-    $('biAmp').textContent=`k=${$('kSig').value} × hourlyσ`;
-  }
+  // Dynamic band — no toggles needed; just update display labels
+  if($('biWidth'))  $('biWidth').textContent  = 'Auto — adapts every hour';
+  if($('biConc'))   $('biConc').textContent   = 'Varies (tight ↔ wide)';
+  if($('biAmp'))    $('biAmp').textContent    = 'k=' + (($('kSig')&&$('kSig').value)||'2.0') + ' × σ + inventory + drift';
 }
-$('dynBand').onchange=updateBandInfo;
-$('fixedBand').oninput=updateBandInfo;
-$('kSig').oninput=updateBandInfo;
 updateBandInfo();
 
 // ── File labels ───────────────────────────────────────────────
@@ -1270,20 +1265,24 @@ function stockNameFromFile(filename){
     .trim() || 'Asset';
 }
 
-$('file1').onchange=()=>{
-  const f = $('file1').files[0];
-  if(!f) return;
-  $('fname1').textContent = f.name;
-  const name = stockNameFromFile(f.name);
-  if(name && name !== 'Asset') $('label1').value = name;
-  updateHeading();
-};
+$('// ── File upload handlers (event listeners — not onchange, avoids CSP issues) ─
+['file1','file2'].forEach((id,idx)=>{
+  const el=$(id); if(!el) return;
+  el.addEventListener('change',function(){
+    const f=this.files&&this.files[0]; if(!f) return;
+    const fnEl=$(['fname1','fname2'][idx]);
+    if(fnEl) fnEl.textContent=f.name;
+    const stock=stockNameFromFile(f.name);
+    const lbl=$(['label1','label2'][idx]);
+    if(lbl&&stock&&stock!=='Asset') lbl.value=stock;
+    updateHeading();
+  });
+});
 $('file2').onchange=()=>{
-  const f = $('file2').files[0];
-  if(!f) return;
-  $('fname2').textContent = f.name;
-  const name = stockNameFromFile(f.name);
-  if(name && name !== 'Asset') $('label2').value = name;
+  const f=$('file2').files[0]; if(!f) return;
+  $('fname2').textContent=f.name;
+  const n=stockNameFromFile(f.name);
+  if(n&&n!=='Asset') $('label2').value=n;
   updateHeading();
 };
 $('dlBtn').onclick=()=>{if(ST.r) dlCsv(ST.swaps,ST.reinvests)};
@@ -1304,7 +1303,7 @@ $('runBtn').onclick=async()=>{
     const result=runSimulation(parseCsv(t1),parseCsv(t2),+$('capital').value,{
       bBuy:  +$('bbuy').value, bSell: +$('bsell').value,
       bReinv:+$('breinv').value, reinvest:$('doReinv').checked,
-      dynBand:$('dynBand').checked, fixedBand:+$('fixedBand').value,
+      dynBand:true, fixedBand:20, // always dynamic — inputs hidden
       minBand:+$('minBand').value, maxBand:+$('maxBand').value,
       volLB:+$('volLB').value, kSig:+$('kSig').value,
     });
