@@ -269,13 +269,33 @@ table.ht .reb-r td{background:rgba(245,158,11,.04)}
 
   <div class="sb">
     <h3>Dynamic Auto-Band</h3>
-    <p class="fhint" style="margin-bottom:12px">
-      Band width <b style="color:var(--amber)">adapts every hour</b> — tightens for max alpha in calm markets, widens to protect inventory when one asset is depleted or ratio drifts from centre.<br/>
-      Centre is <b style="color:var(--amber)">permanently locked</b> at the opening ratio. No recentering ever.
+    <p class="fhint" style="margin-bottom:10px">
+      Band width <b style="color:var(--amber)">adapts every hour</b> — tight in calm/balanced markets (max concentration = max alpha), wider when inventory is depleted or ratio has drifted far from centre.<br/>
+      Centre permanently locked at opening ratio. No recentering.
     </p>
-    <input id="dynBand"      type="checkbox" checked style="display:none"/>
-    <input id="fixedBand"    type="number"   value="20" style="display:none"/>
-    <input id="fixedBandRow" type="hidden"/>
+    <div class="two">
+      <div class="field"><label>Min Band ±%</label>
+        <input id="minBand" type="number" min="1" max="40" step="0.5" value="3"/>
+      </div>
+      <div class="field"><label>Max Band ±%</label>
+        <input id="maxBand" type="number" min="5" max="80" step="1" value="30"/>
+      </div>
+    </div>
+    <div class="two">
+      <div class="field"><label>Vol Lookback (hrs)</label>
+        <input id="volLB" type="number" min="4" max="168" step="4" value="24"/>
+      </div>
+      <div class="field"><label>Sigma factor k</label>
+        <input id="kSig" type="number" min="0.5" max="5" step="0.1" value="2.0"/>
+      </div>
+    </div>
+    <div class="band-info" id="bandInfo">
+      <div class="bi-row"><span class="bi-label">Current mode</span><span class="bi-val" id="biWidth">Auto-adaptive</span></div>
+      <div class="bi-row"><span class="bi-label">Concentration</span><span class="bi-val" id="biConc">Varies hourly</span></div>
+      <div class="bi-row"><span class="bi-label">Formula</span><span class="bi-val" id="biAmp">vol + imbalance + drift</span></div>
+    </div>
+    <input id="dynBand"   type="checkbox" checked style="display:none"/>
+    <input id="fixedBand" type="number"   value="20" style="display:none"/>
   <div class="sb">
     <h3>Brokerage</h3>
     <div class="two">
@@ -373,7 +393,7 @@ table.ht .reb-r td{background:rgba(245,158,11,.04)}
   </div>
 </main>
 
-<script type="module">
+<script>
 // ═══════════════════════════════════════════════════════════════
 // UTIL
 // ═══════════════════════════════════════════════════════════════
