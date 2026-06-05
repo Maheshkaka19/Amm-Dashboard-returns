@@ -85,7 +85,6 @@ code{font-family:var(--fm);font-size:.85em;color:var(--cyan);background:var(--cy
   position:relative;transition:.15s;margin-bottom:10px;
 }
 .uz:hover{border-color:var(--amber);color:var(--text)}
-.uz input{position:absolute;inset:0;opacity:0;cursor:pointer}
 .uz .un{font-size:.69rem;color:var(--amber);font-family:var(--fm);word-break:break-all}
 
 .tog{
@@ -247,17 +246,17 @@ table.ht .reb-r td{background:rgba(245,158,11,.04)}
   <div class="sb">
     <h3>Assets</h3>
     <div class="field"><label>Asset 1 Name</label><input id="label1" type="text" value="Reliance"/></div>
-    <div class="uz" id="zone1">
+    <label class="uz" for="file1" id="zone1">
       <span>📂 Asset 1 · 1-minute CSV</span>
       <span class="un" id="fname1"></span>
-      <input id="file1" type="file" accept=".csv"/>
-    </div>
+    </label>
+    <input id="file1" type="file" accept=".csv" style="display:none"/>
     <div class="field"><label>Asset 2 Name</label><input id="label2" type="text" value="Kotak Bank"/></div>
-    <div class="uz" id="zone2">
+    <label class="uz" for="file2" id="zone2">
       <span>📂 Asset 2 · 1-minute CSV</span>
       <span class="un" id="fname2"></span>
-      <input id="file2" type="file" accept=".csv"/>
-    </div>
+    </label>
+    <input id="file2" type="file" accept=".csv" style="display:none"/>
   </div>
 
   <div class="sb">
@@ -1286,20 +1285,23 @@ function stockNameFromFile(filename){
 }
 
 $('// ── File upload handlers (event listeners — not onchange, avoids CSP issues) ─
-['file1','file2'].forEach((id,idx)=>{
-  const el=$(id); if(!el) return;
-  el.addEventListener('change',function(){
-    const f=this.files&&this.files[0]; if(!f) return;
-    const fnEl=$(['fname1','fname2'][idx]);
-    if(fnEl) fnEl.textContent=f.name;
-    const stock=stockNameFromFile(f.name);
-    const lbl=$(['label1','label2'][idx]);
-    if(lbl&&stock&&stock!=='Asset') lbl.value=stock;
+// ── File upload handlers ────────────────────────────────────────────────
+function onFileSelect(inputId, nameId, labelId){
+  var inp = document.getElementById(inputId);
+  if(!inp) return;
+  inp.addEventListener('change', function(){
+    var f = this.files && this.files[0];
+    if(!f) return;
+    var nm = document.getElementById(nameId);
+    if(nm) nm.textContent = f.name;
+    var stock = stockNameFromFile(f.name);
+    var lb = document.getElementById(labelId);
+    if(lb && stock && stock !== 'Asset') lb.value = stock;
     updateHeading();
   });
-});
-$('file2').onchange=()=>{
-  const f=$('file2').files[0]; if(!f) return;
+}
+onFileSelect('file1','fname1','label1');
+onFileSelect('file2','fname2','label2');
   $('fname2').textContent=f.name;
   const n=stockNameFromFile(f.name);
   if(n&&n!=='Asset') $('label2').value=n;
