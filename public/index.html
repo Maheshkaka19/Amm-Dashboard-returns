@@ -1,765 +1,256 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Pool Alpha Reinvestment · NSE</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:Arial,sans-serif;background:#0a1628;color:#e2e8f0;min-height:100vh;display:flex}
-button,input,select{font-family:inherit}
-/* LAYOUT */
-.sidebar{width:300px;flex-shrink:0;background:#0d1e35;border-right:1px solid #1e3a5f;overflow-y:auto;height:100vh;position:sticky;top:0}
-.main{flex:1;padding:24px;overflow-x:hidden}
-/* SIDEBAR */
-.brand{padding:20px;border-bottom:1px solid #1e3a5f}
-.brand-tag{font-size:.65rem;color:#38bdf8;letter-spacing:.15em;text-transform:uppercase;margin-bottom:6px}
-.brand h1{font-size:1.15rem;font-weight:700;color:#f8fafc;line-height:1.3}
-.brand p{font-size:.72rem;color:#64748b;margin-top:6px;line-height:1.5}
-.sb-section{padding:16px 20px;border-bottom:1px solid #1e3a5f}
-.sb-section h3{font-size:.65rem;color:#38bdf8;letter-spacing:.12em;text-transform:uppercase;margin-bottom:12px}
-.field{margin-bottom:10px}
-.field label{display:block;font-size:.73rem;color:#94a3b8;margin-bottom:4px}
-.field input{width:100%;background:#0a1628;border:1px solid #1e3a5f;color:#e2e8f0;padding:7px 10px;border-radius:8px;font-size:.82rem}
-.field input:focus{outline:none;border-color:#38bdf8}
-.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.hint{font-size:.68rem;color:#475569;line-height:1.5;margin-top:-6px;margin-bottom:10px}
-/* FILE UPLOAD — simplest reliable approach */
-.upload-zone{display:block;border:2px dashed #1e3a5f;border-radius:10px;padding:14px;text-align:center;cursor:pointer;background:#061020;margin-bottom:10px;transition:border-color .15s}
-.upload-zone:hover{border-color:#38bdf8;background:#071828}
-.upload-zone span{display:block;font-size:.75rem;color:#64748b;pointer-events:none}
-.upload-zone .fname{font-size:.70rem;color:#38bdf8;margin-top:4px;word-break:break-all}
-.file-input{width:100%;font-size:.75rem;color:#94a3b8;margin-bottom:10px;cursor:pointer}
-.file-input::-webkit-file-upload-button{background:#1e3a5f;color:#e2e8f0;border:none;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:.73rem}
-.run-btn{display:block;width:100%;margin:16px 20px;width:calc(100% - 40px);padding:11px;background:linear-gradient(135deg,#0284c7,#38bdf8);color:#0a1628;font-weight:700;font-size:.9rem;border:none;border-radius:10px;cursor:pointer}
-.run-btn:hover{opacity:.9}
-.run-btn:disabled{opacity:.4;cursor:not-allowed}
-/* MAIN */
-.status{padding:12px 16px;border-radius:10px;font-size:.80rem;margin-bottom:20px;line-height:1.5}
-.s-info{background:rgba(14,116,144,.12);border:1px solid rgba(14,116,144,.3);color:#7dd3fc}
-.s-ok  {background:rgba(16,185,129,.10);border:1px solid rgba(16,185,129,.28);color:#6ee7b7}
-.s-warn{background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.28);color:#fde68a}
-.s-err {background:rgba(244,63,94,.10); border:1px solid rgba(244,63,94,.28); color:#fca5a5}
-.card{background:#0d1e35;border:1px solid #1e3a5f;border-radius:12px;padding:20px;margin-bottom:18px}
-.card h2{font-size:.88rem;font-weight:700;color:#f8fafc;margin-bottom:14px}
-.card-sub{font-size:.72rem;color:#64748b;margin-bottom:14px}
-/* METRIC GRID */
-.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px}
-.metric{background:#061828;border:1px solid #1e3a5f;border-radius:10px;padding:14px}
-.metric.hi{border-color:rgba(56,189,248,.4);background:rgba(56,189,248,.05)}
-.metric.pos-bg{border-color:rgba(16,185,129,.3);background:rgba(16,185,129,.05)}
-.metric.neg-bg{border-color:rgba(244,63,94,.3);background:rgba(244,63,94,.05)}
-.metric-lbl{font-size:.67rem;color:#64748b;margin-bottom:6px}
-.metric-val{font-size:1.05rem;font-weight:700}
-.metric-d{font-size:.70rem;margin-top:3px}
-.pos{color:#22c55e}.neg{color:#f97316}.amb{color:#f59e0b}.mut{color:#64748b}
-/* CHART */
-.chart-wrap{width:100%;height:240px}
-canvas{display:block;width:100%!important;height:100%!important}
-/* STATS GRID */
-.sgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px}
-.st{background:#061828;border:1px solid #1e3a5f;border-radius:9px;padding:10px 12px}
-.st-l{font-size:.65rem;color:#64748b;margin-bottom:4px}
-.st-v{font-size:.85rem;font-weight:700}
-/* TABLE */
-.tbl-wrap{overflow-x:auto}
-table{width:100%;border-collapse:collapse;min-width:700px}
-th{text-align:left;padding:7px 10px;font-size:.62rem;color:#64748b;border-bottom:1px solid #1e3a5f;text-transform:uppercase;letter-spacing:.05em}
-td{padding:7px 10px;font-size:.73rem;border-bottom:1px solid #0d1e35;white-space:nowrap}
-td.r{text-align:right;font-family:monospace}
-.tr-swap{background:rgba(56,189,248,.02)}
-.tr-reinv{background:rgba(16,185,129,.03)}
-.tr-rebal{background:rgba(245,158,11,.03)}
-.bdg{border-radius:4px;padding:2px 6px;font-size:.60rem;font-weight:700}
-.bdg-swap{background:rgba(56,189,248,.15);color:#7dd3fc}
-.bdg-reinv{background:rgba(16,185,129,.15);color:#6ee7b7}
-.bdg-rebal{background:rgba(245,158,11,.15);color:#fde68a}
-.bdg-oor{background:rgba(244,63,94,.15);color:#fca5a5;margin-left:4px}
-.note{font-size:.70rem;color:#64748b;margin-bottom:8px}
-.expl{background:#061828;border-left:3px solid #22c55e;border-radius:0 8px 8px 0;padding:10px 14px;font-size:.74rem;color:#94a3b8;line-height:1.6;margin-top:12px}
-.expl b{color:#e2e8f0}
-.expl.warn{border-left-color:#f59e0b}
-.expl.bad{border-left-color:#f43f5e}
-.hidden{display:none!important}
-.pill{background:rgba(129,140,248,.15);color:#a5b4fc;border-radius:999px;padding:3px 10px;font-size:.70rem}
-@media(max-width:800px){body{flex-direction:column}.sidebar{width:100%;height:auto;position:relative}.main{padding:16px}}
-</style>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>AMM Calculus Engine — NSE Concentrated Liquidity</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link rel="stylesheet" href="/styles.css"/>
 </head>
 <body>
+<main class="shell">
 
-<aside class="sidebar">
-  <div class="brand">
-    <div class="brand-tag">Concentrated Liquidity · NSE Stocks</div>
-    <h1>Pool Alpha<br/>Reinvestment</h1>
-    <p>Dynamic band · Volatility harvest · Smart reinvestment · 6-guard protection</p>
-  </div>
+  <!-- ══ SIDEBAR ══════════════════════════════════════════════════════════ -->
+  <aside class="sidebar">
 
-  <div class="sb-section">
-    <h3>Asset 1</h3>
-    <div class="field"><label>Name</label><input id="label1" type="text" value="Reliance"/></div>
-    <div class="field"><label>1-Minute CSV File</label>
-      <input id="file1" type="file" accept=".csv,.CSV" class="file-input"/>
-      <span id="fname1" class="hint"></span>
+    <div class="brand card">
+      <p class="eyebrow">Calculus-Optimal · V3 Liquidity · NSE · Real IL</p>
+      <h1>AMM Calculus<br/>Engine</h1>
+      <p class="lede">
+        Concentration range is set automatically by solving a Lagrangian optimisation
+        each hour — maximising fee yield subject to an IL budget. The engine
+        adapts to volatility, inventory imbalance, and accumulated alpha.
+        Profits are compounded back into the pool as additional liquidity.
+      </p>
     </div>
-  </div>
 
-  <div class="sb-section">
-    <h3>Asset 2</h3>
-    <div class="field"><label>Name</label><input id="label2" type="text" value="Kotak Bank"/></div>
-    <div class="field"><label>1-Minute CSV File</label>
-      <input id="file2" type="file" accept=".csv,.CSV" class="file-input"/>
-      <span id="fname2" class="hint"></span>
+    <!-- Data upload -->
+    <section class="card">
+      <h2>Datasets</h2>
+
+      <label class="upload-zone" for="asset1File">
+        <span class="upload-icon">↑</span>
+        <span id="asset1FileName" class="upload-name">Asset 1 — 1-min CSV</span>
+        <input id="asset1File" type="file" accept=".csv,text/csv"/>
+      </label>
+      <div class="field" style="margin-bottom:12px">
+        <span>Label</span>
+        <input id="asset1Label" type="text" value="Reliance"/>
+      </div>
+
+      <label class="upload-zone" for="asset2File">
+        <span class="upload-icon">↑</span>
+        <span id="asset2FileName" class="upload-name">Asset 2 — 1-min CSV</span>
+        <input id="asset2File" type="file" accept=".csv,text/csv"/>
+      </label>
+      <div class="field">
+        <span>Label</span>
+        <input id="asset2Label" type="text" value="Kotak Bank"/>
+      </div>
+
+      <button id="runSimulation" class="btn-primary">
+        <span class="btn-icon">▶</span>
+        <span class="btn-label">Run Simulation</span>
+      </button>
+    </section>
+
+    <!-- Capital -->
+    <section class="card">
+      <h2>Capital</h2>
+      <div class="field">
+        <span>Total Capital (₹)</span>
+        <input id="realCapital" type="number" min="10000" step="100000" value="2000000"/>
+        <span class="sub-hint">Split 50/50 between assets at initialisation</span>
+      </div>
+    </section>
+
+    <!-- Calculus engine params -->
+    <section class="card card-accent">
+      <h2>⟡ Calculus Range Engine</h2>
+
+      <div class="formula-block">
+        <span class="f-label">LAGRANGIAN OPTIMISATION</span>
+        α* = Newton-Raphson on:<br/>
+        f(α) = 2√(1−α)/(2−α) − 1 + θ = 0<br/>
+        where θ = IL budget (adaptive)<br/>
+        <br/>
+        <span class="f-label">CONCENTRATION FACTOR</span>
+        C(α) = 1 / (1 − √(rLow/rHigh))<br/>
+        <br/>
+        <span class="f-label">ADAPTIVE BUDGET</span>
+        θ_eff = θ_base · exp(−λ · cashROI%)
+      </div>
+
+      <div class="field" style="margin-top:12px">
+        <span>IL Budget θ (%)</span>
+        <input id="ilBudgetPct" type="number" min="0.5" max="40" step="0.5" value="8"/>
+        <span class="sub-hint">Max acceptable IL% → solver sets concentration range. Tighter = higher fees &amp; IL risk. Looser = safer but lower yield.</span>
+      </div>
+      <div class="two-col">
+        <div class="field">
+          <span>Protect Cap (%)</span>
+          <input id="alphaProtectCap" type="number" min="1" max="100" step="1" value="15"/>
+          <span class="sub-hint">CashROI% at which budget → minimum</span>
+        </div>
+        <div class="field">
+          <span>Decay λ</span>
+          <input id="alphaProtectLambda" type="number" min="0.5" max="10" step="0.5" value="3"/>
+          <span class="sub-hint">Speed of budget shrinkage</span>
+        </div>
+      </div>
+      <div class="field">
+        <span>Volatility Width Multiplier</span>
+        <input id="sigmaMultiplier" type="number" min="0" max="10" step="0.5" value="2"/>
+        <span class="sub-hint">Widens range during volatile hours (EWMA σ). Higher = fewer recenters at cost of lower concentration.</span>
+      </div>
+
+      <div class="info-box">
+        <strong>How the engine works:</strong><br/>
+        Every hour, the solver computes α* — the exact half-width that maximises
+        concentration while keeping worst-case IL within the budget.
+        Inventory skew asymmetrically widens the side where rebalancing is needed.
+        As alpha builds, θ_eff shrinks automatically to protect gains.
+      </div>
+    </section>
+
+    <!-- Compounding -->
+    <section class="card card-purple">
+      <h2>♻ Profit Compounding</h2>
+      <div class="two-col">
+        <div class="field">
+          <span>Compound Every (hrs)</span>
+          <input id="compoundIntervalHours" type="number" min="1" max="168" step="1" value="24"/>
+        </div>
+        <div class="field">
+          <span>Min Trigger (% capital)</span>
+          <input id="compoundMinPct" type="number" min="0.01" max="10" step="0.1" value="0.5"/>
+        </div>
+      </div>
+      <p class="hint">
+        80% of accumulated cash profit is reinvested as additional liquidity L every
+        compound interval (if profit ≥ trigger). This compounds alpha: more L → more
+        swap volume → more fees → more reinvestment.
+      </p>
+    </section>
+
+    <!-- Brokerage -->
+    <section class="card">
+      <h2>Brokerage</h2>
+      <div class="two-col">
+        <div class="field">
+          <span>Buy (%)</span>
+          <input id="buyBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
+        </div>
+        <div class="field">
+          <span>Sell (%)</span>
+          <input id="sellBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
+        </div>
+      </div>
+      <p class="hint">Each swap executes only when revenue − cost − brokerage &gt; 0.</p>
+    </section>
+
+    <!-- Hard stop -->
+    <section class="card card-danger">
+      <h2>⛔ IL Hard Stop (optional)</h2>
+      <div class="two-col">
+        <div class="field">
+          <span>Stop at IL (%)</span>
+          <input id="ilHardStopPct" type="number" min="0" max="100" step="0.5" value="0"/>
+          <span class="sub-hint">0 = disabled</span>
+        </div>
+        <div class="field">
+          <span>Resume at IL (%)</span>
+          <input id="ilHardResumePct" type="number" min="0" max="100" step="0.5" value="0"/>
+        </div>
+      </div>
+      <p class="hint">Emergency circuit breaker. The calculus engine handles IL budgeting automatically — only use this for extreme risk events.</p>
+    </section>
+
+    <!-- CSV format -->
+    <section class="card card-flat">
+      <h2>CSV Format</h2>
+      <p class="hint" style="margin-bottom:8px">Required columns in your 1-minute data:</p>
+      <p class="hint"><code>date</code> — <code>2025-01-01 09:15:00+05:30</code></p>
+      <p class="hint"><code>close</code> — price in ₹</p>
+      <p class="hint"><code>volume</code> — traded volume</p>
+      <p class="hint" style="margin-top:6px;opacity:0.7">1-minute bars are merged to hourly automatically</p>
+    </section>
+
+  </aside>
+
+  <!-- ══ CONTENT ═══════════════════════════════════════════════════════════ -->
+  <section class="content">
+
+    <div id="statusBanner" class="status-banner status-info">
+      <span class="sb-icon">◎</span>
+      <span>Upload two 1-minute CSV files and click Run Simulation. The calculus engine will solve for the optimal concentration range automatically.</span>
     </div>
-  </div>
 
-  <div class="sb-section">
-    <h3>Capital</h3>
-    <div class="field"><label>Starting Capital (₹)</label>
-      <input id="capital" type="number" value="2000000" min="10000" step="100000"/>
-    </div>
-  </div>
+    <div id="haltBanner" class="halt-banner hidden"></div>
 
-  <div class="sb-section">
-    <h3>Dynamic Band</h3>
-    <p class="hint">Auto-adapts every hour. Centre locked at opening ratio — no recentering.</p>
-    <div class="two">
-      <div class="field"><label>Min Band ±%</label><input id="minBand" type="number" value="3" min="1" max="40" step="0.5"/></div>
-      <div class="field"><label>Max Band ±%</label><input id="maxBand" type="number" value="30" min="5" max="80" step="1"/></div>
-    </div>
-    <div class="two">
-      <div class="field"><label>Vol Lookback (hrs)</label><input id="volLB" type="number" value="24" min="4" max="168" step="4"/></div>
-      <div class="field"><label>Sigma k</label><input id="kSig" type="number" value="2.0" min="0.5" max="5" step="0.1"/></div>
-    </div>
-  </div>
-
-  <div class="sb-section">
-    <h3>Brokerage</h3>
-    <div class="two">
-      <div class="field"><label>Buy %</label><input id="bbuy"  type="number" value="0.15" min="0" max="5" step="0.01"/></div>
-      <div class="field"><label>Sell %</label><input id="bsell" type="number" value="0.15" min="0" max="5" step="0.01"/></div>
-    </div>
-  </div>
-
-  <div class="sb-section">
-    <h3>Reinvestment</h3>
-    <div class="field" style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-      <input id="doReinv" type="checkbox" checked style="width:15px;height:15px;accent-color:#38bdf8"/>
-      <label for="doReinv" style="cursor:pointer;color:#94a3b8;font-size:.78rem">Compound profits back into pool</label>
-    </div>
-    <div class="field"><label>Reinvest Brokerage %</label><input id="breinv" type="number" value="0.15" min="0" max="5" step="0.01"/></div>
-    <p class="hint">Smart two-mode: normal lot (balanced) + single-asset rebalance (depleted &lt;20%).</p>
-  </div>
-
-  <button class="run-btn" id="runBtn">▶ Run Simulation</button>
-</aside>
-
-<main class="main">
-  <div id="status" class="status s-info">Upload two 1-minute CSV files (columns: <b>date, close, volume</b>) and click Run.</div>
-
-  <div id="metricsCard" class="card hidden">
-    <h2 id="pairHeading">Reliance ↔ Kotak Bank</h2>
-    <div class="card-sub">Results · <span id="dateRange"></span></div>
-    <div id="metricsGrid" class="metrics"></div>
-  </div>
-
-  <div id="chartCard" class="card hidden">
-    <h2>Portfolio Value Over Time</h2>
-    <div class="chart-wrap"><canvas id="chart"></canvas></div>
-    <div style="display:flex;gap:18px;margin-top:10px;flex-wrap:wrap;font-size:.70rem;color:#64748b">
-      <span><span style="display:inline-block;width:18px;height:2px;background:#38bdf8;vertical-align:middle;margin-right:4px"></span>Pool Total</span>
-      <span><span style="display:inline-block;width:18px;height:2px;background:#8b5cf6;border-top:2px dashed #8b5cf6;vertical-align:middle;margin-right:4px"></span>Buy &amp; Hold</span>
-      <span style="color:#22c55e">▎ Reinvestment</span>
-      <span style="color:rgba(244,63,94,.6)">▓ Out-of-range</span>
-    </div>
-  </div>
-
-  <div id="statsCard" class="card hidden">
-    <h2>Pool Analytics &amp; Guards</h2>
-    <div id="statsGrid" class="sgrid"></div>
-    <div id="statsExpl" class="expl"></div>
-  </div>
-
-  <div id="histCard" class="card hidden">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <h2 style="margin:0">Trade Ledger</h2>
-      <div style="display:flex;gap:8px;align-items:center">
-        <span id="evtCount" class="pill hidden"></span>
-        <button id="dlBtn" class="hidden" onclick="downloadCSV()" style="background:#1e3a5f;color:#e2e8f0;border:none;padding:6px 12px;border-radius:7px;cursor:pointer;font-size:.73rem">⬇ Export CSV</button>
+    <!-- Results -->
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <p class="pair-eyebrow">Calculus-Optimal V3 Pool · Results</p>
+          <h2 id="pairHeading">Reliance  ↔  Kotak Bank</h2>
+        </div>
+        <button id="downloadCsv" class="btn-secondary hidden">⬇ Export CSV</button>
+      </div>
+      <div id="metricsGrid" class="metric-grid">
+        <div class="empty-state">Upload CSV files and run simulation</div>
       </div>
     </div>
-    <div id="tblNote" class="note"></div>
-    <div class="tbl-wrap">
-      <table><thead><tr>
-        <th>Date</th><th>Type</th><th>Action</th>
-        <th class="r">Sell</th><th class="r">Buy</th><th class="r">Net ₹</th>
-        <th class="r">Cash ₹</th><th class="r">A Shares</th><th class="r">B Shares</th><th>In Range</th>
-      </tr></thead>
-      <tbody id="histBody"></tbody></table>
+
+    <!-- Performance -->
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <p class="pair-eyebrow">Performance Summary</p>
+          <h2>Harvest · Risk · Compounding · Concentration</h2>
+        </div>
+      </div>
+      <div id="perfPanel"><div class="empty-state">Run simulation first</div></div>
     </div>
-  </div>
+
+    <!-- Equity chart -->
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <p class="pair-eyebrow">Portfolio Value over Time</p>
+          <h2>AMM Total · Hold · Cash Profit · yellow = swap events</h2>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
+    </div>
+
+    <!-- Alpha chart -->
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <p class="pair-eyebrow">Net Alpha &amp; Impermanent Loss</p>
+          <h2>Alpha ₹ · IL% (scaled ×1000) · red shading = halted</h2>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="alphaChart"></canvas></div>
+    </div>
+
+    <!-- Trade table -->
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <p class="pair-eyebrow">Trade History</p>
+          <h2>V3 swaps with optimal α*, θ_eff, concentration, full P&amp;L</h2>
+        </div>
+        <span id="swapCount" class="count-pill hidden"></span>
+      </div>
+      <div id="tableWrap"><div class="empty-state">No trades yet</div></div>
+    </div>
+
+  </section>
 </main>
 
-<script>
-// ═══════════════════════════════════════════════════════
-// UTILITIES
-// ═══════════════════════════════════════════════════════
-function ge(id){ return document.getElementById(id); }
-function inr(v){ return new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(v); }
-function pct(v,d){ d=d||2; return (v>=0?'+':'')+Number(v).toFixed(d)+'%'; }
-function dec(v,d){ return Number(v).toFixed(d||2); }
-function qty(v){ return Math.round(v).toLocaleString('en-IN'); }
-function clamp(v,lo,hi){ return Math.min(hi,Math.max(lo,v)); }
-function stdDev(arr){
-  if(!arr||arr.length<2) return 0;
-  var m=arr.reduce(function(s,v){return s+v;},0)/arr.length;
-  var v=arr.reduce(function(s,x){return s+(x-m)*(x-m);},0)/(arr.length-1);
-  return Math.sqrt(v);
-}
-function concFactor(b){
-  var bb=clamp(b,0.001,0.98);
-  return 1/(1-Math.sqrt((1-bb)/(1+bb)));
-}
-
-// ═══════════════════════════════════════════════════════
-// CSV PARSING
-// ═══════════════════════════════════════════════════════
-function parseCsv(text){
-  var lines=text.trim().split(/\r?\n/).filter(Boolean);
-  if(lines.length<2) return [];
-  var hdrs=lines[0].split(',').map(function(h){return h.trim().toLowerCase().replace(/[^a-z0-9]/g,'');});
-  return lines.slice(1).map(function(line){
-    var cells=line.split(',');
-    var row={};
-    hdrs.forEach(function(h,i){row[h]=(cells[i]||'').trim();});
-    return row;
-  });
-}
-function normalizeRows(rows){
-  return rows.map(function(r){
-    return {date:new Date(r.date||r.datetime||r.time||''),close:+(r.close||r.ltp||r.price||0)};
-  }).filter(function(r){return !isNaN(r.date)&&r.close>0;}).sort(function(a,b){return a.date-b.date;});
-}
-function buildHourly(a1,a2){
-  var m1={},m2={};
-  a1.forEach(function(r){var h=new Date(r.date);h.setMinutes(0,0,0);m1[h.toISOString()]=r.close;});
-  a2.forEach(function(r){var h=new Date(r.date);h.setMinutes(0,0,0);m2[h.toISOString()]=r.close;});
-  var out=[];
-  Object.keys(m1).forEach(function(k){if(m2[k])out.push({date:new Date(k),c1:m1[k],c2:m2[k]});});
-  return out.sort(function(a,b){return a.date-b.date;});
-}
-
-// ═══════════════════════════════════════════════════════
-// V3 MATH
-// ═══════════════════════════════════════════════════════
-function computeL(cap,p1,p2,r,rL,rH){
-  var sr=Math.sqrt(clamp(r,rL,rH)),sra=Math.sqrt(rL),srb=Math.sqrt(rH);
-  var d=(1/sr-1/srb)*p1+(sr-sra)*p2;
-  return d>1e-10?cap/d:0;
-}
-function v3Res(L,r,rL,rH){
-  var sr=Math.sqrt(clamp(r,rL,rH)),sra=Math.sqrt(rL),srb=Math.sqrt(rH);
-  return{x:L*(1/sr-1/srb),y:L*(sr-sra)};
-}
-
-// ═══════════════════════════════════════════════════════
-// SIMULATION
-// ═══════════════════════════════════════════════════════
-var STATE={swaps:[],reinvests:[],curve:[],r:null};
-
-function runSim(rows1,rows2,capital,cfg){
-  var a1=normalizeRows(rows1),a2=normalizeRows(rows2);
-  if(!a1.length||!a2.length) return{err:'No valid rows in CSV. Need date and close columns.'};
-  var hourly=buildHourly(a1,a2);
-  if(hourly.length<4) return{err:'Less than 4 overlapping hourly bars. Check CSV date ranges match.'};
-
-  var bBuy   =clamp(+(cfg.bBuy  ||0.15),0,5)/100;
-  var bSell  =clamp(+(cfg.bSell ||0.15),0,5)/100;
-  var bReinv =clamp(+(cfg.bReinv||0.15),0,5)/100;
-  var doReinv=cfg.reinvest!==false;
-  var minBand=clamp(+(cfg.minBand||3),0.5,40)/100;
-  var maxBand=clamp(+(cfg.maxBand||30),5,80)/100;
-  var volLB  =clamp(+(cfg.volLB ||24),4,168);
-  var kSig   =clamp(+(cfg.kSig  ||2.0),0.5,5);
-
-  // Initial band from first volLB hours
-  var h0=hourly[0];
-  var p1_0=h0.c1,p2_0=h0.c2;
-  var initRets=[];
-  for(var ii=1;ii<Math.min(hourly.length,volLB+1);ii++){
-    var r0=hourly[ii-1].c1/hourly[ii-1].c2,r1=hourly[ii].c1/hourly[ii].c2;
-    if(r0>0&&r1>0) initRets.push(Math.log(r1/r0));
-  }
-  var initBand=initRets.length>=4?clamp(kSig*stdDev(initRets),minBand,maxBand):minBand;
-
-  // Fixed centre
-  var rC=p1_0/p2_0;
-  var rL=rC*(1-initBand),rH=rC*(1+initBand);
-  var bCur=initBand;
-
-  // Init pool
-  var L=computeL(capital,p1_0,p2_0,rC,rL,rH);
-  if(L<=0) return{err:'Band too narrow or capital too low.'};
-  var res0=v3Res(L,rC,rL,rH);
-  var xS=Math.max(1,Math.round(res0.x)),yS=Math.max(1,Math.round(res0.y));
-  var x0=xS,y0=yS;
-  var startCap=x0*p1_0+y0*p2_0;
-
-  // State
-  var cash=0,totBrok=0,grossFees=0;
-  var swapCount=0,skipCount=0,oorHours=0;
-  var reinvestCount=0,reinvestNormalCount=0,reinvestRebalCount=0;
-  var xAdded=0,yAdded=0,reinvestedCap=0;
-  var sumBand=0,minBandSeen=1,maxBandSeen=0;
-
-  // Guards
-  var MIN_NET=10,BROK_CAP=0.04,MAX_SW24=48,DIV_PAUSE=0.20,DIV_RESUME=0.15,IL_STOP=0.92;
-  var trendPaused=false,guardCount=0;
-  var divPaused=false,divCount=0;
-  var ilOpen=false,ilCount=0;
-  var recentTimes=[],p1hist=[],p2hist=[];
-  var logRatios=[],lr1=[],lr2=[];
-
-  // Pair fitness (first 15%)
-  var fitN=Math.max(14,Math.floor(hourly.length*0.15));
-  var fitH=hourly.slice(0,fitN),fitScore=50,fitLabel='CAUTION';
-  if(fitH.length>=10){
-    var fRat=fitH.map(function(h){return h.c1/h.c2;});
-    var fLrA=fitH.slice(1).map(function(h,i){return Math.log(h.c1/fitH[i].c1);});
-    var fLrB=fitH.slice(1).map(function(h,i){return Math.log(h.c2/fitH[i].c2);});
-    var fLrR=fRat.slice(1).map(function(r,i){return Math.log(r/fRat[i]);});
-    var mA=fLrA.reduce(function(s,v){return s+v;},0)/fLrA.length;
-    var mB=fLrB.reduce(function(s,v){return s+v;},0)/fLrB.length;
-    var cov=0,vA=0,vB=0;
-    fLrA.forEach(function(a,i){cov+=(a-mA)*(fLrB[i]-mB);vA+=(a-mA)*(a-mA);vB+=(fLrB[i]-mB)*(fLrB[i]-mB);});
-    var fitCorr=(vA>0&&vB>0)?cov/Math.sqrt(vA*vB):0;
-    var fitDrift=Math.abs(fRat[fRat.length-1]/fRat[0]-1);
-    var mn=fLrR.reduce(function(s,v){return s+v;},0)/fLrR.length;
-    var cum=[];fLrR.forEach(function(v,i){cum.push((cum[i-1]||0)+(v-mn));});
-    var fR=Math.max.apply(null,cum)-Math.min.apply(null,cum);
-    var fS=stdDev(fLrR);
-    var fitHurst=(fR>0&&fS>0)?Math.log(fR/fS)/Math.log(fLrR.length):0.5;
-    fitScore=Math.round(Math.max(0,fitCorr)*40+Math.max(0,1-fitDrift/0.12)*30+Math.max(0,1-Math.max(0,fitHurst-0.45)/0.15)*30);
-    fitLabel=fitScore>=60?'SUITABLE':fitScore>=40?'CAUTION':'UNSUITABLE';
-  }
-
-  var swaps=[],reinvests=[],curve=[];
-  curve.push({date:h0.date.toISOString(),pool:startCap,hold:startCap,cash:0,inRange:true,band:bCur*100});
-
-  for(var i=1;i<hourly.length;i++){
-    var row=hourly[i],p1=row.c1,p2=row.c2,r=p1/p2;
-    var dt=row.date.toISOString();
-
-    // Log returns
-    if(i>0&&hourly[i-1].c1>0&&hourly[i-1].c2>0){
-      var dlrA=Math.log(p1/hourly[i-1].c1),dlrB=Math.log(p2/hourly[i-1].c2);
-      lr1.push(dlrA);lr2.push(dlrB);
-      logRatios.push(dlrA-dlrB);
-      if(logRatios.length>168) logRatios.shift();
-    }
-
-    // Dynamic band
-    var volC=logRatios.length>=4?kSig*stdDev(logRatios.slice(-Math.min(volLB,logRatios.length))):minBand;
-    var valAd=xS*p1,valBd=yS*p2,totD=valAd+valBd;
-    var imbD=totD>0?Math.abs(valAd-valBd)/totD:0;
-    var imbC=imbD*maxBand*0.4;
-    var devC=rC>0?Math.abs(r-rC)/rC*1.5:0;
-    bCur=clamp(Math.max(volC,devC)+imbC,minBand,maxBand);
-    rL=rC*(1-bCur);rH=rC*(1+bCur);
-    var pv=xS*p1+yS*p2;
-    if(pv>0) L=computeL(pv,p1,p2,clamp(r,rL,rH),rL,rH);
-    sumBand+=bCur;
-    if(bCur<minBandSeen)minBandSeen=bCur;
-    if(bCur>maxBandSeen)maxBandSeen=bCur;
-
-    // Guard 1: Hurst
-    var hurstNow=0.5;
-    if(logRatios.length>=12){
-      var lr=logRatios.slice(-48);
-      var mn2=lr.reduce(function(s,v){return s+v;},0)/lr.length;
-      var cumH=lr.reduce(function(a,v,ii){a.push((a[ii-1]||0)+(v-mn2));return a;},[]);
-      var R2=Math.max.apply(null,cumH)-Math.min.apply(null,cumH);
-      var S2=stdDev(lr);
-      if(R2>0&&S2>0) hurstNow=clamp(Math.log(R2/S2)/Math.log(lr.length),0.2,0.9);
-    }
-    if(!trendPaused&&hurstNow>0.55){trendPaused=true;guardCount++;}
-    else if(trendPaused&&hurstNow<0.48) trendPaused=false;
-
-    // Guard 5: 30d divergence
-    p1hist.push(p1);p2hist.push(p2);
-    if(p1hist.length>721){p1hist.shift();p2hist.shift();}
-    if(p1hist.length>=720){
-      var ret30a=(p1-p1hist[0])/p1hist[0],ret30b=(p2-p2hist[0])/p2hist[0];
-      var div30=Math.abs(ret30a-ret30b);
-      if(!divPaused&&div30>DIV_PAUSE){divPaused=true;divCount++;}
-      else if(divPaused&&div30<DIV_RESUME) divPaused=false;
-    }
-
-    // Guard 6: IL circuit breaker
-    var holdNow=x0*p1+y0*p2,poolNow=xS*p1+yS*p2;
-    var ilRatio=holdNow>0?poolNow/holdNow:1;
-    if(!ilOpen&&ilRatio<IL_STOP){ilOpen=true;ilCount++;}
-    else if(ilOpen&&ilRatio>IL_STOP+0.03) ilOpen=false;
-
-    // Guard 2+3: dynamic min net
-    var brokSoFar=totBrok/(startCap||1);
-    var now=row.date.getTime();
-    while(recentTimes.length&&now-recentTimes[0]>86400000) recentTimes.shift();
-    var brokMult=brokSoFar>BROK_CAP?3:1;
-    var freqMult=recentTimes.length>MAX_SW24?2:1;
-    var minNet=MIN_NET*brokMult*freqMult;
-
-    var inRange=r>=rL&&r<=rH;
-    if(!inRange) oorHours++;
-
-    var swapOK=!trendPaused&&!ilOpen;
-    var sellAOK=swapOK&&!divPaused;
-
-    // Compute targets
-    var tgt=v3Res(L,r,rL,rH);
-    var xT=Math.max(0,Math.round(tgt.x)),yT=Math.max(0,Math.round(tgt.y));
-    var dx=xT-xS,dy=yT-yS;
-
-    // Execute swap
-    if(sellAOK&&dx<0&&xS>1){
-      var sellA=Math.min(-dx,xS-1);
-      if(sellA>=1){
-        var gRev=sellA*p1,nRev=gRev*(1-bSell);
-        var buyB=Math.floor(nRev/(p2*(1+bBuy)));
-        if(buyB>=1){
-          var brok=bSell*gRev+bBuy*buyB*p2,net=gRev-buyB*p2-brok;
-          if(net>=minNet){
-            xS-=sellA;yS+=buyB;
-            cash+=net;totBrok+=brok;grossFees+=(gRev-buyB*p2);swapCount++;
-            recentTimes.push(now);
-            swaps.push({date:dt,sellA:true,sell:sellA,buy:buyB,net:net,cash:cash,brok:brok,p1:p1,p2:p2,xS:xS,yS:yS,inRange:inRange,mode:'swap'});
-          } else skipCount++;
-        } else skipCount++;
-      }
-    } else if(swapOK&&dx>0&&yS>1){
-      var sbW=dy<0?-dy:Math.max(1,Math.round(dx*p1/p2));
-      var sellB=Math.min(sbW,yS-1);
-      if(sellB>=1){
-        var gRev2=sellB*p2,nRev2=gRev2*(1-bSell);
-        var buyA=Math.floor(nRev2/(p1*(1+bBuy)));
-        if(buyA>=1){
-          var brok2=bSell*gRev2+bBuy*buyA*p1,net2=gRev2-buyA*p1-brok2;
-          if(net2>=minNet){
-            xS+=buyA;yS-=sellB;
-            cash+=net2;totBrok+=brok2;grossFees+=(gRev2-buyA*p1);swapCount++;
-            recentTimes.push(now);
-            swaps.push({date:dt,sellA:false,sell:sellB,buy:buyA,net:net2,cash:cash,brok:brok2,p1:p1,p2:p2,xS:xS,yS:yS,inRange:inRange,mode:'swap'});
-          } else skipCount++;
-        } else skipCount++;
-      }
-    }
-
-    // Smart reinvestment
-    if(doReinv&&cash>0){
-      var vA=xS*p1,vB=yS*p2,tot=vA+vB;
-      var balFrac=tot>0?Math.min(vA,vB)/tot:0;
-      if(balFrac<0.20&&tot>0){
-        var buyAside=vA<=vB,bprice=buyAside?p1:p2;
-        var mc2=bprice*(1+bReinv);
-        if(cash>=mc2){
-          var n=Math.floor(cash/mc2),raw=n*bprice,bk=bReinv*raw,sp=raw+bk;
-          if(cash>=sp&&n>=1){
-            if(buyAside){xS+=n;xAdded+=n;}else{yS+=n;yAdded+=n;}
-            cash-=sp;totBrok+=bk;reinvestedCap+=raw;reinvestCount++;reinvestRebalCount++;
-            var rc=clamp(r,rL,rH);
-            L=computeL(xS*p1+yS*p2,p1,p2,rc,rL,rH);
-            reinvests.push({date:dt,mode:'rebalance',addX:buyAside?n:0,addY:buyAside?0:n,n:n,raw:raw,brok:bk,spent:sp,cash:cash,xS:xS,yS:yS,p1:p1,p2:p2,inRange:inRange});
-          }
-        }
-      } else if(xS>0&&yS>0){
-        var ratio2=Math.max(1,Math.round(yS/xS));
-        var rawLot=p1+ratio2*p2,lotCost=rawLot*(1+bReinv);
-        if(cash>=lotCost){
-          var n2=Math.floor(cash/lotCost),aX=n2,aY=n2*ratio2;
-          var raw2=aX*p1+aY*p2,bk2=bReinv*raw2,sp2=raw2+bk2;
-          if(cash>=sp2&&aX>=1&&aY>=1){
-            xS+=aX;yS+=aY;xAdded+=aX;yAdded+=aY;
-            cash-=sp2;totBrok+=bk2;reinvestedCap+=raw2;reinvestCount++;reinvestNormalCount++;
-            var rc2=clamp(r,rL,rH);
-            L=computeL(xS*p1+yS*p2,p1,p2,rc2,rL,rH);
-            reinvests.push({date:dt,mode:'normal',addX:aX,addY:aY,ratio:ratio2,n:n2,raw:raw2,brok:bk2,spent:sp2,cash:cash,xS:xS,yS:yS,p1:p1,p2:p2,inRange:inRange});
-          }
-        }
-      }
-    }
-
-    curve.push({date:dt,pool:xS*p1+yS*p2+cash,hold:x0*p1+y0*p2,cash:cash,inRange:inRange,band:bCur*100});
-  }
-
-  // Final
-  var last=hourly[hourly.length-1];
-  var pF1=last.c1,pF2=last.c2;
-  var finalPool=xS*pF1+yS*pF2,finalHold=x0*pF1+y0*pF2;
-  var totalVal=finalPool+cash;
-  var n=hourly.length-1;
-  var avgBand=n>0?sumBand/n*100:initBand*100;
-  var avgConc=n>0?sumBand/n:initBand;
-  // pearson correlation
-  var corr=0;
-  if(lr1.length>5){
-    var mA2=lr1.reduce(function(s,v){return s+v;},0)/lr1.length;
-    var mB2=lr2.reduce(function(s,v){return s+v;},0)/lr2.length;
-    var cv=0,va=0,vb=0;
-    lr1.forEach(function(a,ii){cv+=(a-mA2)*(lr2[ii]-mB2);va+=(a-mA2)*(a-mA2);vb+=(lr2[ii]-mB2)*(lr2[ii]-mB2);});
-    if(va>0&&vb>0) corr=cv/Math.sqrt(va*vb);
-  }
-
-  return{swaps:swaps,reinvests:reinvests,curve:curve,r:{
-    startCap:startCap,totalVal:totalVal,finalHold:finalHold,finalPool:finalPool,cash:cash,
-    grossFees:grossFees,totBrok:totBrok,
-    il:finalPool-finalHold,ilPct:(finalHold>0?(finalPool/finalHold-1)*100:0),
-    alpha:totalVal-finalHold,alphaPct:(finalHold>0?(totalVal/finalHold-1)*100:0),
-    totalRoi:(startCap>0?(totalVal/startCap-1)*100:0),
-    holdRoi:(startCap>0?(finalHold/startCap-1)*100:0),
-    swapCount:swapCount,skipCount:skipCount,reinvestCount:reinvestCount,
-    reinvestNormalCount:reinvestNormalCount,reinvestRebalCount:reinvestRebalCount,
-    xAdded:xAdded,yAdded:yAdded,reinvestedCap:reinvestedCap,
-    x0:x0,y0:y0,xF:xS,yF:yS,p1_0:p1_0,p2_0:p2_0,pF1:pF1,pF2:pF2,
-    hours:hourly.length,oorHours:oorHours,oorPct:(hourly.length>1?oorHours/(hourly.length-1)*100:0),
-    avgBand:avgBand,minBandSeen:minBandSeen*100,maxBandSeen:maxBandSeen*100,
-    avgConc:concFactor(avgConc),
-    pairFitScore:fitScore,fitLabel:fitLabel,
-    trendPaused:trendPaused,guardCount:guardCount,
-    divPaused:divPaused,divCount:divCount,
-    ilOpen:ilOpen,ilCount:ilCount,corr:corr,
-    dateFirst:hourly[0].date.toISOString(),dateLast:last.date.toISOString(),
-  }};
-}
-
-// ═══════════════════════════════════════════════════════
-// CHART
-// ═══════════════════════════════════════════════════════
-function drawChart(canvas,curve,reinvests){
-  if(!canvas||!curve.length) return;
-  var dpr=window.devicePixelRatio||1;
-  var W=canvas.offsetWidth,H=canvas.offsetHeight||240;
-  canvas.width=W*dpr;canvas.height=H*dpr;
-  var ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);
-  var P={t:16,r:14,b:36,l:72},cW=W-P.l-P.r,cH=H-P.t-P.b;
-  var step=Math.max(1,Math.floor(curve.length/500));
-  var pts=curve.filter(function(_,i){return i%step===0;});
-  var yMin=Infinity,yMax=-Infinity;
-  pts.forEach(function(p){if(p.pool<yMin)yMin=p.pool;if(p.pool>yMax)yMax=p.pool;if(p.hold<yMin)yMin=p.hold;if(p.hold>yMax)yMax=p.hold;});
-  var pad=(yMax-yMin)*0.08;yMin-=pad;yMax+=pad;if(yMin>=yMax){yMin-=1;yMax+=1;}
-  var toX=function(i){return P.l+(i/(pts.length-1||1))*cW;};
-  var toY=function(v){return P.t+cH-((v-yMin)/(yMax-yMin))*cH;};
-  ctx.clearRect(0,0,W,H);
-  for(var g=0;g<=5;g++){
-    var yv=yMin+(g/5)*(yMax-yMin),yp=toY(yv);
-    ctx.strokeStyle='rgba(148,163,184,.07)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(P.l,yp);ctx.lineTo(P.l+cW,yp);ctx.stroke();
-    ctx.fillStyle='rgba(148,163,184,.5)';ctx.font='9px Arial';ctx.textAlign='right';
-    var lbl=Math.abs(yMax-yMin)>500000?'₹'+(yv/100000).toFixed(1)+'L':Math.abs(yMax-yMin)>1000?'₹'+(yv/1000).toFixed(0)+'K':'₹'+yv.toFixed(0);
-    ctx.fillText(lbl,P.l-3,yp+3);
-  }
-  for(var gi=0;gi<=4;gi++){
-    var idx=Math.round((gi/4)*(pts.length-1));
-    ctx.fillStyle='rgba(148,163,184,.4)';ctx.font='9px Arial';ctx.textAlign='center';
-    ctx.fillText(new Date(pts[idx].date).toLocaleDateString('en-IN',{day:'numeric',month:'short'}),toX(idx),H-P.b+13);
-  }
-  // OOR shading
-  var inO=false,oS=0;
-  pts.forEach(function(p,ii){
-    if(!p.inRange&&!inO){inO=true;oS=ii;}
-    if(p.inRange&&inO){ctx.fillStyle='rgba(244,63,94,.08)';ctx.fillRect(toX(oS),P.t,toX(ii)-toX(oS),cH);inO=false;}
-  });
-  if(inO){ctx.fillStyle='rgba(244,63,94,.08)';ctx.fillRect(toX(oS),P.t,toX(pts.length-1)-toX(oS),cH);}
-  // Reinvestment lines
-  var rSet=new Set(reinvests.map(function(r){return r.date.substring(0,13);}));
-  pts.forEach(function(p,ii){if(rSet.has(p.date.substring(0,13))){ctx.fillStyle='rgba(34,197,94,.5)';ctx.fillRect(toX(ii)-1,P.t,2,cH);}});
-  // Hold line
-  ctx.save();ctx.setLineDash([5,5]);ctx.strokeStyle='rgba(139,92,246,.55)';ctx.lineWidth=1.5;
-  ctx.beginPath();pts.forEach(function(p,ii){ii===0?ctx.moveTo(toX(ii),toY(p.hold)):ctx.lineTo(toX(ii),toY(p.hold));});
-  ctx.stroke();ctx.restore();
-  // Pool area
-  var ag=ctx.createLinearGradient(0,P.t,0,P.t+cH);
-  ag.addColorStop(0,'rgba(56,189,248,.15)');ag.addColorStop(1,'rgba(56,189,248,0)');
-  ctx.beginPath();pts.forEach(function(p,ii){ii===0?ctx.moveTo(toX(ii),toY(p.pool)):ctx.lineTo(toX(ii),toY(p.pool));});
-  ctx.lineTo(toX(pts.length-1),P.t+cH);ctx.lineTo(P.l,P.t+cH);ctx.closePath();ctx.fillStyle=ag;ctx.fill();
-  // Pool line
-  ctx.beginPath();ctx.strokeStyle='#38bdf8';ctx.lineWidth=2;ctx.lineJoin='round';
-  pts.forEach(function(p,ii){ii===0?ctx.moveTo(toX(ii),toY(p.pool)):ctx.lineTo(toX(ii),toY(p.pool));});
-  ctx.stroke();
-}
-
-// ═══════════════════════════════════════════════════════
-// RENDER
-// ═══════════════════════════════════════════════════════
-function setStatus(cls,html){var el=ge('status');el.className='status '+cls;el.innerHTML=html;}
-
-function renderMetrics(r,l1,l2){
-  var mc=function(lbl,val,d,cls){
-    return '<div class="metric'+(cls?' '+cls:'')+'"><div class="metric-lbl">'+lbl+'</div><div class="metric-val">'+val+'</div>'+(d?'<div class="metric-d">'+d+'</div>':'')+'</div>';
-  };
-  ge('metricsGrid').innerHTML=
-    mc('Starting Capital',inr(r.startCap),null)+
-    mc('Pool Total Value',inr(r.totalVal),'<span class="'+(r.totalRoi>=0?'pos':'neg')+'">'+pct(r.totalRoi)+'</span>','hi')+
-    mc('Buy &amp; Hold Value',inr(r.finalHold),'<span class="'+(r.holdRoi>=0?'pos':'neg')+'">'+pct(r.holdRoi)+'</span>')+
-    mc('Pool Alpha',inr(r.alpha),'<span class="'+(r.alphaPct>=0?'pos':'neg')+'">'+pct(r.alphaPct,3)+' over hold</span>',r.alphaPct>=0?'pos-bg':'neg-bg')+
-    mc('Cash Collected',inr(r.cash),r.swapCount+' swaps')+
-    mc('Impermanent Loss',inr(r.il),'<span class="'+(r.ilPct>=0?'pos':'neg')+'">'+pct(r.ilPct,3)+'</span>',r.il<0?'neg-bg':'pos-bg')+
-    mc('Brokerage Paid',inr(r.totBrok),null)+
-    mc('Avg Band ±',dec(r.avgBand,2)+'%','['+dec(r.minBandSeen,1)+' – '+dec(r.maxBandSeen,1)+']');
-  ge('dateRange').textContent=new Date(r.dateFirst).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})+' – '+new Date(r.dateLast).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
-  ge('metricsCard').classList.remove('hidden');
-}
-
-function renderStats(r,l1,l2){
-  var s=function(lbl,val,cls){return '<div class="st"><div class="st-l">'+lbl+'</div><div class="st-v'+(cls?' '+cls:'')+'"">'+val+'</div></div>';};
-  ge('statsGrid').innerHTML=
-    s('🎯 Pair Fitness',r.pairFitScore+'/100 — '+r.fitLabel,r.pairFitScore>=60?'pos':r.pairFitScore>=40?'amb':'neg')+
-    s('Correlation',(Math.round(r.corr*100)||0)+'%',r.corr>0.5?'pos':r.corr>0.3?'amb':'neg')+
-    s('In-Range Rate',dec(100-r.oorPct,1)+'%',(100-r.oorPct)>70?'pos':'neg')+
-    s('Avg Concentration',dec(r.avgConc,2)+'×','amb')+
-    s('🔄 Normal Reinvests',r.reinvestNormalCount+'×',r.reinvestNormalCount?'pos':'mut')+
-    s('⚖️ Rebalance Reinvests',r.reinvestRebalCount+'×',r.reinvestRebalCount?'amb':'mut')+
-    s('⚡ Guard 1 (Hurst)',r.guardCount?r.guardCount+'× fired':'Clear',r.guardCount?'amb':'pos')+
-    s('🔴 Guard 5 (Divergence)',r.divCount?r.divCount+'× fired':'Clear',r.divCount?'neg':'pos')+
-    s('🔴 Guard 6 (IL Circuit)',r.ilCount?r.ilCount+'× fired':'Clear',r.ilCount?'neg':'pos');
-
-  var tips=[];
-  if(r.pairFitScore<40) tips.push('<b>🚨 Pair unsuitable ('+r.pairFitScore+'/100).</b> Low correlation and/or early ratio drift detected. IL is likely to exceed alpha on this pair.');
-  if(r.divCount>0) tips.push('<b>⚠️ Guard 5 (Return Divergence) fired '+r.divCount+'×.</b> One stock outpaced the other by >20% over a 30-day window. Sell-A direction was automatically blocked.');
-  if(r.ilCount>0) tips.push('<b>🔴 Guard 6 (IL Circuit Breaker) fired '+r.ilCount+'×.</b> Pool assets fell below 92% of hold — all swaps halted to prevent the IL from deepening further.');
-  if(r.guardCount>0) tips.push('<b>⚡ Guard 1 (Hurst Pause) fired '+r.guardCount+'×.</b> Rolling Hurst >0.55 detected trending regime. Swaps paused until mean-reversion restored.');
-  if(!tips.length) tips.push('<b>✅ All guards clear.</b> Pool is healthy with positive alpha and no risk events triggered.');
-
-  var el=ge('statsExpl');
-  el.className='expl'+(r.alphaPct<0?' bad':r.pairFitScore<40?' warn':'');
-  el.innerHTML=tips.join('<br/><br/>');
-  ge('statsCard').classList.remove('hidden');
-}
-
-function renderHistory(swaps,reinvests,l1,l2){
-  var all=swaps.concat(reinvests).sort(function(a,b){return a.date.localeCompare(b.date);});
-  ge('evtCount').textContent=all.length+' events';
-  ge('evtCount').classList.remove('hidden');
-  ge('dlBtn').classList.remove('hidden');
-  var show=all.slice(-300);
-  ge('tblNote').textContent=all.length>300?'Showing last 300 of '+all.length+'. Export CSV for full history.':'';
-  ge('histBody').innerHTML=show.map(function(e){
-    if(e.mode==='swap'){
-      var act=e.sellA?('Sell '+l1+' → Buy '+l2):('Sell '+l2+' → Buy '+l1);
-      return '<tr class="tr-swap"><td>'+new Date(e.date).toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})+'</td>'
-        +'<td><span class="bdg bdg-swap">SWAP</span>'+(e.inRange?'':'<span class="bdg bdg-oor">OOR</span>')+'</td>'
-        +'<td>'+act+'</td>'
-        +'<td class="r neg">-'+qty(e.sell)+'</td>'
-        +'<td class="r pos">+'+qty(e.buy)+'</td>'
-        +'<td class="r pos">'+inr(e.net)+'</td>'
-        +'<td class="r">'+inr(e.cash)+'</td>'
-        +'<td class="r">'+qty(e.xS)+'</td>'
-        +'<td class="r">'+qty(e.yS)+'</td>'
-        +'<td class="r '+(e.inRange?'pos':'neg')+'">'+(e.inRange?'✓':'✗')+'</td>'
-        +'</tr>';
-    } else {
-      var badge=e.mode==='rebalance'?'bdg-rebal':'bdg-reinv';
-      var lbl=e.mode==='rebalance'?'⚖️ REBALANCE':'🔄 REINVEST';
-      var act2=e.mode==='rebalance'?('Buy '+(e.addX>0?e.addX:e.addY)+' '+(e.addX>0?l1:l2)+' (rebalance)'):('+'+(e.addX||0)+' '+l1+' + '+(e.addY||0)+' '+l2);
-      return '<tr class="tr-'+(e.mode==='rebalance'?'rebal':'reinv')+'"><td>'+new Date(e.date).toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})+'</td>'
-        +'<td><span class="bdg '+badge+'">'+lbl+'</span></td>'
-        +'<td>'+act2+'</td>'
-        +'<td class="r mut">—</td>'
-        +'<td class="r pos">+'+(e.addX+e.addY)+'</td>'
-        +'<td class="r neg">'+inr(-e.spent)+'</td>'
-        +'<td class="r">'+inr(e.cash)+'</td>'
-        +'<td class="r">'+qty(e.xS)+'</td>'
-        +'<td class="r">'+qty(e.yS)+'</td>'
-        +'<td class="r pos">✓</td>'
-        +'</tr>';
-    }
-  }).join('');
-  ge('histCard').classList.remove('hidden');
-}
-
-// ═══════════════════════════════════════════════════════
-// CSV EXPORT
-// ═══════════════════════════════════════════════════════
-function downloadCSV(){
-  if(!STATE.swaps) return;
-  var all=STATE.swaps.concat(STATE.reinvests).sort(function(a,b){return a.date.localeCompare(b.date);});
-  var h='Type,Mode,Date,Action,Sell,Buy,Net,Cash,A_Shares,B_Shares,A_Price,B_Price,InRange\n';
-  var rows=all.map(function(e){
-    if(e.mode==='swap')
-      return ['SWAP','normal',e.date,'"'+(e.sellA?'Sell A→Buy B':'Sell B→Buy A')+'"',e.sell,e.buy,e.net.toFixed(2),e.cash.toFixed(2),e.xS,e.yS,e.p1,e.p2,e.inRange].join(',');
-    else
-      return ['REINVEST',e.mode,e.date,'"Buy '+(e.addX||0)+' A + '+(e.addY||0)+' B"',0,(e.addX||0)+(e.addY||0),(-e.spent).toFixed(2),e.cash.toFixed(2),e.xS,e.yS,e.p1,e.p2,e.inRange].join(',');
-  });
-  var blob=new Blob([h+rows.join('\n')],{type:'text/csv'});
-  var url=URL.createObjectURL(blob);
-  var a=document.createElement('a');a.href=url;a.download='pool_ledger.csv';a.click();
-  URL.revokeObjectURL(url);
-}
-
-// ═══════════════════════════════════════════════════════
-// FILE NAME HELPER
-// ═══════════════════════════════════════════════════════
-function stockName(filename){
-  return (filename||'').replace(/\.(csv|xlsx|txt)$/i,'').replace(/_?(1m|5m|15m|1h|daily|hourly|min|minute|weekly).*$/i,'').replace(/[_\-\.]+/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}).trim()||'Asset';
-}
-
-// ═══════════════════════════════════════════════════════
-// INIT — runs after DOM ready
-// ═══════════════════════════════════════════════════════
-window.addEventListener('DOMContentLoaded', function(){
-
-  // File input handlers
-  ge('file1').addEventListener('change', function(){
-    if(this.files && this.files[0]){
-      ge('fname1').textContent = '✓ ' + this.files[0].name;
-      var s = stockName(this.files[0].name);
-      if(s) ge('label1').value = s;
-    }
-  });
-  ge('file2').addEventListener('change', function(){
-    if(this.files && this.files[0]){
-      ge('fname2').textContent = '✓ ' + this.files[0].name;
-      var s = stockName(this.files[0].name);
-      if(s) ge('label2').value = s;
-    }
-  });
-
-  // Run button
-  ge('runBtn').addEventListener('click', function(){
-    var f1=ge('file1').files&&ge('file1').files[0];
-    var f2=ge('file2').files&&ge('file2').files[0];
-    if(!f1||!f2){setStatus('s-err','<b>Error:</b> Please select both CSV files first.');return;}
-    ge('runBtn').disabled=true;ge('runBtn').textContent='⏳ Running…';
-    ['metricsCard','chartCard','statsCard','histCard'].forEach(function(id){ge(id).classList.add('hidden');});
-    setStatus('s-info','<b>Running simulation…</b> Reading files and computing hourly V3 pool…');
-    setTimeout(function(){
-      try{
-        Promise.all([f1.text(),f2.text()]).then(function(texts){
-          var l1=ge('label1').value||'Asset 1',l2=ge('label2').value||'Asset 2';
-          var cfg={bBuy:ge('bbuy').value,bSell:ge('bsell').value,bReinv:ge('breinv').value,
-            reinvest:ge('doReinv').checked,minBand:ge('minBand').value,maxBand:ge('maxBand').value,
-            volLB:ge('volLB').value,kSig:ge('kSig').value};
-          var res=runSim(parseCsv(texts[0]),parseCsv(texts[1]),+ge('capital').value,cfg);
-          if(res.err){setStatus('s-err','<b>Error:</b> '+res.err);}
-          else{
-            STATE.swaps=res.swaps;STATE.reinvests=res.reinvests;STATE.curve=res.curve;STATE.r=res.r;
-            ge('pairHeading').textContent=l1+' \u2194 '+l2;
-            renderMetrics(res.r,l1,l2);
-            renderStats(res.r,l1,l2);
-            renderHistory(res.swaps,res.reinvests,l1,l2);
-            ge('chartCard').classList.remove('hidden');
-            requestAnimationFrame(function(){drawChart(ge('chart'),res.curve,res.reinvests);});
-            var beat=res.r.alphaPct>=0;
-            setStatus(beat?'s-ok':'s-warn',
-              '<b>'+(beat?'✅ Pool beats hold':'⚠️ Pool behind hold')+'</b> by '+inr(Math.abs(res.r.alpha))+' ('+pct(res.r.alphaPct,2)+').  '
-              +'Band avg: ±'+dec(res.r.avgBand,2)+'%  ·  Cash: '+inr(res.r.cash)+'  ·  IL: '+dec(res.r.ilPct,3)+'%  ·  '
-              +res.r.swapCount+' swaps  ·  '+res.r.reinvestCount+' reinvestments  ·  '
-              +'Fitness: '+res.r.pairFitScore+'/100 ('+res.r.fitLabel+')');
-          }
-          ge('runBtn').disabled=false;ge('runBtn').textContent='▶ Run Simulation';
-        }).catch(function(e){setStatus('s-err','<b>Error reading files:</b> '+e.message);ge('runBtn').disabled=false;ge('runBtn').textContent='▶ Run Simulation';});
-      }catch(e){setStatus('s-err','<b>Error:</b> '+e.message);ge('runBtn').disabled=false;ge('runBtn').textContent='▶ Run Simulation';}
-    },20);
-  });
-
-});
-</script>
+<script type="module" src="/app.js"></script>
 </body>
 </html>

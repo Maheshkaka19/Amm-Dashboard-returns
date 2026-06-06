@@ -1,14 +1,12 @@
 {
-  "name": "amm-dashboard-returns",
-  "version": "0.3.0",
+  "name": "amm-calculus-engine",
+  "version": "4.0.0",
   "private": true,
   "type": "module",
-  "engines": {
-    "node": ">=20"
-  },
+  "engines": { "node": ">=20" },
   "scripts": {
     "build": "node build.mjs",
     "start": "node server.mjs",
-    "dev": "node server.mjs"
+    "dev":   "node server.mjs"
   }
 }
