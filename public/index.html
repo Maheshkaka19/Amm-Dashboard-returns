@@ -3,229 +3,182 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>AMM Calculus Engine — NSE Concentrated Liquidity</title>
+  <title>AMM Pool Simulator</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link rel="stylesheet" href="/styles.css"/>
 </head>
 <body>
-<main class="shell">
+<div class="shell">
 
-  <!-- ══ SIDEBAR ═══════════════════════════════════════════════════════════ -->
+  <!-- SIDEBAR -->
   <aside class="sidebar">
 
-    <div class="brand card">
-      <p class="eyebrow">Calculus-Optimal · V3 Liquidity · NSE · Real P&amp;L</p>
-      <h1>AMM Calculus<br/>Engine v4</h1>
-      <p class="lede">
-        Concentration range is solved automatically each hour using Lagrangian optimisation.
-        Swap profits compound back into the pool as additional liquidity.
-        No manual band configuration needed.
-      </p>
+    <div class="brand">
+      <h1>AMM Pool Simulator</h1>
+      <p>Concentrated liquidity engine for NSE stock pairs. Profits auto-reinvest into the pool.</p>
     </div>
 
-    <!-- Upload -->
-    <section class="card">
-      <h2>Datasets</h2>
-      <label class="upload-zone" for="asset1File">
-        <span class="upload-icon">↑</span>
-        <span id="asset1FileName" class="upload-name">Asset 1 — 1-min CSV</span>
-        <input id="asset1File" type="file" accept=".csv,text/csv"/>
-      </label>
-      <div class="field" style="margin-bottom:12px">
-        <span>Label</span>
-        <input id="asset1Label" type="text" value="Reliance"/>
-      </div>
-      <label class="upload-zone" for="asset2File">
-        <span class="upload-icon">↑</span>
-        <span id="asset2FileName" class="upload-name">Asset 2 — 1-min CSV</span>
-        <input id="asset2File" type="file" accept=".csv,text/csv"/>
-      </label>
-      <div class="field">
-        <span>Label</span>
-        <input id="asset2Label" type="text" value="Kotak Bank"/>
-      </div>
-      <button id="runSimulation" class="btn-primary">
-        <span>▶</span><span class="btn-label">Run Simulation</span>
-      </button>
-    </section>
+    <div class="section">
+      <div class="section-title">Assets</div>
 
-    <!-- Capital -->
-    <section class="card">
-      <h2>Capital</h2>
       <div class="field">
-        <span>Total Capital (₹)</span>
-        <input id="realCapital" type="number" min="10000" step="100000" value="2000000"/>
-        <span class="sub-hint">Deployed equally between the two assets</span>
+        <label for="asset1File">Asset 1</label>
+        <label class="upload" for="asset1File">
+          <input id="asset1File" type="file" accept=".csv,text/csv"/>
+          <div class="upload-text">Upload 1-min CSV</div>
+          <div id="asset1FileName" class="upload-name"></div>
+        </label>
+        <input id="asset1Label" type="text" value="Reliance" placeholder="Name"/>
       </div>
-    </section>
 
-    <!-- Calculus engine -->
-    <section class="card card-accent">
-      <h2>⟡ Risk Settings</h2>
-      <div class="formula-block">
-        <span class="f-label">HOW THE ENGINE WORKS</span>
-        The engine finds the tightest concentration range
-        where worst-case loss stays within your IL budget.
-        Narrower range → higher fees but more IL risk.
-        Budget shrinks automatically as profits build up.
+      <div class="field">
+        <label for="asset2File">Asset 2</label>
+        <label class="upload" for="asset2File">
+          <input id="asset2File" type="file" accept=".csv,text/csv"/>
+          <div class="upload-text">Upload 1-min CSV</div>
+          <div id="asset2FileName" class="upload-name"></div>
+        </label>
+        <input id="asset2Label" type="text" value="Kotak Bank" placeholder="Name"/>
       </div>
-      <div class="field" style="margin-top:12px">
-        <span>IL Budget — max acceptable loss (%)</span>
-        <input id="ilBudgetPct" type="number" min="0.5" max="40" step="0.5" value="8"/>
-        <span class="sub-hint">Recommended 5–12%. Higher = more fees &amp; more risk.</span>
+
+      <div class="field">
+        <label>Capital (₹)</label>
+        <input id="realCapital" type="number" value="2000000" step="100000" min="10000"/>
+      </div>
+    </div>
+
+    <hr/>
+
+    <div class="section">
+      <div class="section-title">Risk</div>
+      <div class="field">
+        <label>Max loss budget (%)</label>
+        <input id="ilBudgetPct" type="number" value="8" min="0.5" max="40" step="0.5"/>
+        <span class="hint">Engine sets concentration range to stay within this loss limit. Lower = safer.</span>
       </div>
       <div class="two-col">
         <div class="field">
-          <span>Protection Cap (%)</span>
-          <input id="alphaProtectCap" type="number" min="1" max="100" step="1" value="15"/>
-          <span class="sub-hint">Cash ROI% at which risk narrows</span>
+          <label>Protection cap (%)</label>
+          <input id="alphaProtectCap" type="number" value="15" min="1" max="100"/>
         </div>
         <div class="field">
-          <span>Decay Speed (λ)</span>
-          <input id="alphaProtectLambda" type="number" min="0.5" max="10" step="0.5" value="3"/>
-          <span class="sub-hint">Higher = tighter range faster</span>
+          <label>Decay speed (λ)</label>
+          <input id="alphaProtectLambda" type="number" value="3" min="0.5" max="10" step="0.5"/>
         </div>
       </div>
       <div class="field">
-        <span>Volatility Buffer</span>
-        <input id="sigmaMultiplier" type="number" min="0" max="10" step="0.5" value="2"/>
-        <span class="sub-hint">Widens range during volatile hours to avoid frequent resets. 1–3 recommended.</span>
+        <label>Volatility buffer</label>
+        <input id="sigmaMultiplier" type="number" value="2" min="0" max="10" step="0.5"/>
+        <span class="hint">Widens range during volatile periods to reduce resets.</span>
       </div>
-    </section>
+    </div>
 
-    <!-- Compounding -->
-    <section class="card card-purple">
-      <h2>♻ Auto-Reinvestment</h2>
+    <hr/>
+
+    <div class="section">
+      <div class="section-title">Reinvestment</div>
       <div class="two-col">
         <div class="field">
-          <span>Reinvest every (hours)</span>
-          <input id="compoundIntervalHours" type="number" min="1" max="168" step="1" value="24"/>
+          <label>Every (hours)</label>
+          <input id="compoundIntervalHours" type="number" value="24" min="1" max="168"/>
         </div>
         <div class="field">
-          <span>Minimum trigger (% of capital)</span>
-          <input id="compoundMinPct" type="number" min="0.01" max="10" step="0.1" value="0.5"/>
+          <label>Min trigger (%)</label>
+          <input id="compoundMinPct" type="number" value="0.5" min="0.01" max="10" step="0.1"/>
         </div>
       </div>
-      <p class="hint">
-        Every 24 hours, 80% of accumulated cash profit is reinvested as pool liquidity.
-        This increases the volume of every future swap — compounding your returns over time.
-        Shown as <strong style="color:#00e5a0">♻ green lines</strong> on the charts and highlighted rows in the ledger.
-      </p>
-    </section>
+      <span class="hint">80% of cash profit is reinvested as pool liquidity every interval.</span>
+    </div>
 
-    <!-- Brokerage -->
-    <section class="card">
-      <h2>Brokerage</h2>
+    <hr/>
+
+    <div class="section">
+      <div class="section-title">Brokerage</div>
       <div class="two-col">
         <div class="field">
-          <span>Buy (%)</span>
-          <input id="buyBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
+          <label>Buy (%)</label>
+          <input id="buyBrokeragePct" type="number" value="0.15" min="0" max="5" step="0.01"/>
         </div>
         <div class="field">
-          <span>Sell (%)</span>
-          <input id="sellBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
+          <label>Sell (%)</label>
+          <input id="sellBrokeragePct" type="number" value="0.15" min="0" max="5" step="0.01"/>
         </div>
       </div>
-      <p class="hint">Every trade executes only when profit after brokerage is positive.</p>
-    </section>
+    </div>
 
-    <!-- Hard stop -->
-    <section class="card card-danger">
-      <h2>⛔ Emergency Stop (optional)</h2>
+    <hr/>
+
+    <div class="section">
+      <div class="section-title">Emergency Stop</div>
       <div class="two-col">
         <div class="field">
-          <span>Stop if IL exceeds (%)</span>
-          <input id="ilHardStopPct" type="number" min="0" max="100" step="0.5" value="0"/>
-          <span class="sub-hint">0 = disabled</span>
+          <label>Stop if loss > (%)</label>
+          <input id="ilHardStopPct" type="number" value="0" min="0" max="100" step="0.5"/>
         </div>
         <div class="field">
-          <span>Resume when IL recovers (%)</span>
-          <input id="ilHardResumePct" type="number" min="0" max="100" step="0.5" value="0"/>
+          <label>Resume at (%)</label>
+          <input id="ilHardResumePct" type="number" value="0" min="0" max="100" step="0.5"/>
         </div>
       </div>
-      <p class="hint">The calculus engine manages IL automatically. Only set this for extreme downside protection.</p>
-    </section>
+      <span class="hint">0 = disabled. The engine manages IL automatically.</span>
+    </div>
 
-    <!-- CSV format -->
-    <section class="card card-flat">
-      <h2>CSV Format</h2>
-      <p class="hint">Required columns in each file:</p>
-      <p class="hint" style="margin-top:6px"><code>date</code> — e.g. <code>2025-01-15 09:15:00+05:30</code></p>
-      <p class="hint"><code>close</code> — price in ₹</p>
-      <p class="hint"><code>volume</code> — trade volume</p>
-      <p class="hint" style="margin-top:6px;opacity:0.6">1-minute bars are merged to hourly internally.</p>
-    </section>
+    <button id="runSimulation" class="run-btn">Run Simulation</button>
 
   </aside>
 
-  <!-- ══ CONTENT ════════════════════════════════════════════════════════════ -->
-  <section class="content">
+  <!-- CONTENT -->
+  <main class="content">
 
-    <div id="statusBanner" class="status-banner status-info">
-      <span class="sb-icon">◎</span>
-      <span>Upload two 1-minute CSV files and click <strong>Run Simulation</strong>. Results appear here instantly.</span>
-    </div>
-
-    <div id="haltBanner" class="halt-banner hidden"></div>
+    <div id="statusBar" class="status">Upload two CSV files and click Run Simulation.</div>
 
     <!-- Results -->
-    <div class="card">
-      <div class="card-head">
-        <div>
-          <p class="pair-eyebrow">Simulation Results</p>
-          <h2 id="pairHeading">Reliance  ↔  Kotak Bank</h2>
+    <div id="resultsSection" class="hidden">
+
+      <div class="sec-head">
+        <h2 id="pairHeading">Reliance ↔ Kotak Bank</h2>
+        <button id="exportBtn" class="export-btn">Export CSV</button>
+      </div>
+
+      <!-- Hero numbers -->
+      <div class="hero-row" id="heroRow"></div>
+
+      <!-- Stat grid -->
+      <div class="stat-grid" id="statGrid" style="margin-top:20px"></div>
+
+      <!-- Charts -->
+      <div class="chart-block" style="margin-top:24px">
+        <div class="legend" id="legend1"></div>
+        <div class="chart-wrap"><canvas id="chart1"></canvas></div>
+        <div class="chart-label">Yellow ticks = trades &nbsp;·&nbsp; Green dashed = reinvestments &nbsp;·&nbsp; Red tint = paused</div>
+      </div>
+
+      <div class="chart-block">
+        <div class="legend" id="legend2"></div>
+        <div class="chart-wrap"><canvas id="chart2"></canvas></div>
+        <div class="chart-label">Net profit vs hold (₹) &nbsp;·&nbsp; Unrealised loss % scaled ×1000</div>
+      </div>
+
+      <!-- Ledger -->
+      <div>
+        <div class="sec-head">
+          <h2>Activity Ledger</h2>
+          <span id="ledgerCount" class="count-tag"></span>
         </div>
-        <button id="downloadCsv" class="btn-secondary hidden">⬇ Export Ledger CSV</button>
-      </div>
-      <div id="summaryCards">
-        <div class="empty-state">Upload CSV files and run simulation to see results</div>
-      </div>
-    </div>
-
-    <!-- Charts -->
-    <div class="card">
-      <div class="card-head">
-        <div>
-          <p class="pair-eyebrow">Portfolio Value Over Time</p>
-          <h2>AMM Pool · Buy &amp; Hold · Cash Earned</h2>
+        <div id="ledgerNote" class="tbl-note hidden"></div>
+        <div class="tbl-wrap" id="ledgerWrap">
+          <div class="empty">No activity yet.</div>
         </div>
       </div>
-      <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
-      <p class="chart-legend-hint">Yellow lines = trade events · Green dashed lines = ♻ reinvestment · Red shading = trading paused</p>
-    </div>
 
-    <div class="card">
-      <div class="card-head">
-        <div>
-          <p class="pair-eyebrow">Net Profit vs Hold &amp; Unrealised Loss</p>
-          <h2>Alpha ₹ · IL% (scaled ×1000 for visibility)</h2>
-        </div>
-      </div>
-      <div class="chart-wrap"><canvas id="alphaChart"></canvas></div>
-      <p class="chart-legend-hint">Yellow lines = trade events · Green dashed lines = ♻ reinvestment · Red shading = trading paused</p>
-    </div>
+    </div><!-- /resultsSection -->
 
-    <!-- Mini stats -->
-    <div class="card">
-      <div class="card-head"><div><p class="pair-eyebrow">Performance Breakdown</p><h2>Trade Quality · Compounding · Risk</h2></div></div>
-      <div id="miniStats"><div class="empty-state">Run simulation first</div></div>
-    </div>
+    <div id="emptyState" class="empty">Upload two 1-minute CSV files and click Run Simulation.</div>
 
-    <!-- Trade ledger -->
-    <div class="card">
-      <div class="card-head">
-        <div>
-          <p class="pair-eyebrow">Full Activity Ledger</p>
-          <h2>Every trade and reinvestment — timestamped</h2>
-        </div>
-        <span id="swapCount" class="count-pill hidden"></span>
-      </div>
-      <div id="tableWrap"><div class="empty-state">No activity yet</div></div>
-    </div>
+  </main>
+</div>
 
-  </section>
-</main>
 <script type="module" src="/app.js"></script>
 </body>
 </html>
