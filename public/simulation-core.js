@@ -561,18 +561,42 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
     // ── PROFIT COMPOUNDING ────────────────────────────────────────────────────
     // Reinvest accumulated cash back into pool as additional L
     const compoundThreshold = initCapital * compoundMinPct / 100;
+    let didCompound = false;
+    let compoundRecord = null;
     if (hoursSinceCompound >= compoundIntervalHours && cashProfit >= compoundThreshold) {
       const reinvestAmt = cashProfit * 0.80;  // reinvest 80%, keep 20% as reserve
       const dL = computeL(reinvestAmt, p1, p2, rCenter, rLow, rHigh);
       if (dL > 0) {
+        const lBefore = L;
         L += dL;
-        // Update share positions for new L
         const resUpd = v3Reserves(L, rNew, rLow, rHigh);
+        const xBefore = xShares, yBefore = yShares;
         xShares = Math.max(1, Math.round(resUpd.x));
         yShares = Math.max(1, Math.round(resUpd.y));
         reinvestedTotal += reinvestAmt;
         cashProfit      -= reinvestAmt;
         compoundEvents++;
+        didCompound = true;
+
+        const pvC = xShares * p1 + yShares * p2;
+        const hvC = xInit   * p1 + yInit   * p2;
+        compoundRecord = {
+          date: row.date.toISOString(),
+          type: 'COMPOUND',
+          action: '♻ Profit Reinvested into Pool',
+          reinvestAmt,
+          lBefore, lAfter: L, dL,
+          xBefore, yBefore,
+          xAfter: xShares, yAfter: yShares,
+          asset1Price: p1, asset2Price: p2,
+          cashProfitBefore: cashProfit + reinvestAmt,
+          cashProfitAfter: cashProfit,
+          poolValueAfter: pvC + cashProfit,
+          ilPct: hvC > 0 ? (pvC / hvC - 1) * 100 : 0,
+          concentration: currentConcentration,
+          compoundEvent: compoundEvents,
+        };
+        swapRecords.push(compoundRecord);
       }
       hoursSinceCompound = 0;
     }
@@ -590,6 +614,7 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
       rCenter, rLow, rHigh, L,
       halted: swapsHalted, haltReason,
       alpha: alphaOpt, concentration: currentConcentration,
+      compoundEvent: didCompound,
     });
   }
 

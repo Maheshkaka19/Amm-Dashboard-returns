@@ -11,24 +11,22 @@
 <body>
 <main class="shell">
 
-  <!-- ══ SIDEBAR ══════════════════════════════════════════════════════════ -->
+  <!-- ══ SIDEBAR ═══════════════════════════════════════════════════════════ -->
   <aside class="sidebar">
 
     <div class="brand card">
-      <p class="eyebrow">Calculus-Optimal · V3 Liquidity · NSE · Real IL</p>
-      <h1>AMM Calculus<br/>Engine</h1>
+      <p class="eyebrow">Calculus-Optimal · V3 Liquidity · NSE · Real P&amp;L</p>
+      <h1>AMM Calculus<br/>Engine v4</h1>
       <p class="lede">
-        Concentration range is set automatically by solving a Lagrangian optimisation
-        each hour — maximising fee yield subject to an IL budget. The engine
-        adapts to volatility, inventory imbalance, and accumulated alpha.
-        Profits are compounded back into the pool as additional liquidity.
+        Concentration range is solved automatically each hour using Lagrangian optimisation.
+        Swap profits compound back into the pool as additional liquidity.
+        No manual band configuration needed.
       </p>
     </div>
 
-    <!-- Data upload -->
+    <!-- Upload -->
     <section class="card">
       <h2>Datasets</h2>
-
       <label class="upload-zone" for="asset1File">
         <span class="upload-icon">↑</span>
         <span id="asset1FileName" class="upload-name">Asset 1 — 1-min CSV</span>
@@ -38,7 +36,6 @@
         <span>Label</span>
         <input id="asset1Label" type="text" value="Reliance"/>
       </div>
-
       <label class="upload-zone" for="asset2File">
         <span class="upload-icon">↑</span>
         <span id="asset2FileName" class="upload-name">Asset 2 — 1-min CSV</span>
@@ -48,10 +45,8 @@
         <span>Label</span>
         <input id="asset2Label" type="text" value="Kotak Bank"/>
       </div>
-
       <button id="runSimulation" class="btn-primary">
-        <span class="btn-icon">▶</span>
-        <span class="btn-label">Run Simulation</span>
+        <span>▶</span><span class="btn-label">Run Simulation</span>
       </button>
     </section>
 
@@ -61,76 +56,61 @@
       <div class="field">
         <span>Total Capital (₹)</span>
         <input id="realCapital" type="number" min="10000" step="100000" value="2000000"/>
-        <span class="sub-hint">Split 50/50 between assets at initialisation</span>
+        <span class="sub-hint">Deployed equally between the two assets</span>
       </div>
     </section>
 
-    <!-- Calculus engine params -->
+    <!-- Calculus engine -->
     <section class="card card-accent">
-      <h2>⟡ Calculus Range Engine</h2>
-
+      <h2>⟡ Risk Settings</h2>
       <div class="formula-block">
-        <span class="f-label">LAGRANGIAN OPTIMISATION</span>
-        α* = Newton-Raphson on:<br/>
-        f(α) = 2√(1−α)/(2−α) − 1 + θ = 0<br/>
-        where θ = IL budget (adaptive)<br/>
-        <br/>
-        <span class="f-label">CONCENTRATION FACTOR</span>
-        C(α) = 1 / (1 − √(rLow/rHigh))<br/>
-        <br/>
-        <span class="f-label">ADAPTIVE BUDGET</span>
-        θ_eff = θ_base · exp(−λ · cashROI%)
+        <span class="f-label">HOW THE ENGINE WORKS</span>
+        The engine finds the tightest concentration range
+        where worst-case loss stays within your IL budget.
+        Narrower range → higher fees but more IL risk.
+        Budget shrinks automatically as profits build up.
       </div>
-
       <div class="field" style="margin-top:12px">
-        <span>IL Budget θ (%)</span>
+        <span>IL Budget — max acceptable loss (%)</span>
         <input id="ilBudgetPct" type="number" min="0.5" max="40" step="0.5" value="8"/>
-        <span class="sub-hint">Max acceptable IL% → solver sets concentration range. Tighter = higher fees &amp; IL risk. Looser = safer but lower yield.</span>
+        <span class="sub-hint">Recommended 5–12%. Higher = more fees &amp; more risk.</span>
       </div>
       <div class="two-col">
         <div class="field">
-          <span>Protect Cap (%)</span>
+          <span>Protection Cap (%)</span>
           <input id="alphaProtectCap" type="number" min="1" max="100" step="1" value="15"/>
-          <span class="sub-hint">CashROI% at which budget → minimum</span>
+          <span class="sub-hint">Cash ROI% at which risk narrows</span>
         </div>
         <div class="field">
-          <span>Decay λ</span>
+          <span>Decay Speed (λ)</span>
           <input id="alphaProtectLambda" type="number" min="0.5" max="10" step="0.5" value="3"/>
-          <span class="sub-hint">Speed of budget shrinkage</span>
+          <span class="sub-hint">Higher = tighter range faster</span>
         </div>
       </div>
       <div class="field">
-        <span>Volatility Width Multiplier</span>
+        <span>Volatility Buffer</span>
         <input id="sigmaMultiplier" type="number" min="0" max="10" step="0.5" value="2"/>
-        <span class="sub-hint">Widens range during volatile hours (EWMA σ). Higher = fewer recenters at cost of lower concentration.</span>
-      </div>
-
-      <div class="info-box">
-        <strong>How the engine works:</strong><br/>
-        Every hour, the solver computes α* — the exact half-width that maximises
-        concentration while keeping worst-case IL within the budget.
-        Inventory skew asymmetrically widens the side where rebalancing is needed.
-        As alpha builds, θ_eff shrinks automatically to protect gains.
+        <span class="sub-hint">Widens range during volatile hours to avoid frequent resets. 1–3 recommended.</span>
       </div>
     </section>
 
     <!-- Compounding -->
     <section class="card card-purple">
-      <h2>♻ Profit Compounding</h2>
+      <h2>♻ Auto-Reinvestment</h2>
       <div class="two-col">
         <div class="field">
-          <span>Compound Every (hrs)</span>
+          <span>Reinvest every (hours)</span>
           <input id="compoundIntervalHours" type="number" min="1" max="168" step="1" value="24"/>
         </div>
         <div class="field">
-          <span>Min Trigger (% capital)</span>
+          <span>Minimum trigger (% of capital)</span>
           <input id="compoundMinPct" type="number" min="0.01" max="10" step="0.1" value="0.5"/>
         </div>
       </div>
       <p class="hint">
-        80% of accumulated cash profit is reinvested as additional liquidity L every
-        compound interval (if profit ≥ trigger). This compounds alpha: more L → more
-        swap volume → more fees → more reinvestment.
+        Every 24 hours, 80% of accumulated cash profit is reinvested as pool liquidity.
+        This increases the volume of every future swap — compounding your returns over time.
+        Shown as <strong style="color:#00e5a0">♻ green lines</strong> on the charts and highlighted rows in the ledger.
       </p>
     </section>
 
@@ -147,44 +127,44 @@
           <input id="sellBrokeragePct" type="number" min="0" max="5" step="0.01" value="0.15"/>
         </div>
       </div>
-      <p class="hint">Each swap executes only when revenue − cost − brokerage &gt; 0.</p>
+      <p class="hint">Every trade executes only when profit after brokerage is positive.</p>
     </section>
 
     <!-- Hard stop -->
     <section class="card card-danger">
-      <h2>⛔ IL Hard Stop (optional)</h2>
+      <h2>⛔ Emergency Stop (optional)</h2>
       <div class="two-col">
         <div class="field">
-          <span>Stop at IL (%)</span>
+          <span>Stop if IL exceeds (%)</span>
           <input id="ilHardStopPct" type="number" min="0" max="100" step="0.5" value="0"/>
           <span class="sub-hint">0 = disabled</span>
         </div>
         <div class="field">
-          <span>Resume at IL (%)</span>
+          <span>Resume when IL recovers (%)</span>
           <input id="ilHardResumePct" type="number" min="0" max="100" step="0.5" value="0"/>
         </div>
       </div>
-      <p class="hint">Emergency circuit breaker. The calculus engine handles IL budgeting automatically — only use this for extreme risk events.</p>
+      <p class="hint">The calculus engine manages IL automatically. Only set this for extreme downside protection.</p>
     </section>
 
     <!-- CSV format -->
     <section class="card card-flat">
       <h2>CSV Format</h2>
-      <p class="hint" style="margin-bottom:8px">Required columns in your 1-minute data:</p>
-      <p class="hint"><code>date</code> — <code>2025-01-01 09:15:00+05:30</code></p>
+      <p class="hint">Required columns in each file:</p>
+      <p class="hint" style="margin-top:6px"><code>date</code> — e.g. <code>2025-01-15 09:15:00+05:30</code></p>
       <p class="hint"><code>close</code> — price in ₹</p>
-      <p class="hint"><code>volume</code> — traded volume</p>
-      <p class="hint" style="margin-top:6px;opacity:0.7">1-minute bars are merged to hourly automatically</p>
+      <p class="hint"><code>volume</code> — trade volume</p>
+      <p class="hint" style="margin-top:6px;opacity:0.6">1-minute bars are merged to hourly internally.</p>
     </section>
 
   </aside>
 
-  <!-- ══ CONTENT ═══════════════════════════════════════════════════════════ -->
+  <!-- ══ CONTENT ════════════════════════════════════════════════════════════ -->
   <section class="content">
 
     <div id="statusBanner" class="status-banner status-info">
       <span class="sb-icon">◎</span>
-      <span>Upload two 1-minute CSV files and click Run Simulation. The calculus engine will solve for the optimal concentration range automatically.</span>
+      <span>Upload two 1-minute CSV files and click <strong>Run Simulation</strong>. Results appear here instantly.</span>
     </div>
 
     <div id="haltBanner" class="halt-banner hidden"></div>
@@ -193,64 +173,59 @@
     <div class="card">
       <div class="card-head">
         <div>
-          <p class="pair-eyebrow">Calculus-Optimal V3 Pool · Results</p>
+          <p class="pair-eyebrow">Simulation Results</p>
           <h2 id="pairHeading">Reliance  ↔  Kotak Bank</h2>
         </div>
-        <button id="downloadCsv" class="btn-secondary hidden">⬇ Export CSV</button>
+        <button id="downloadCsv" class="btn-secondary hidden">⬇ Export Ledger CSV</button>
       </div>
-      <div id="metricsGrid" class="metric-grid">
-        <div class="empty-state">Upload CSV files and run simulation</div>
+      <div id="summaryCards">
+        <div class="empty-state">Upload CSV files and run simulation to see results</div>
       </div>
     </div>
 
-    <!-- Performance -->
+    <!-- Charts -->
     <div class="card">
       <div class="card-head">
         <div>
-          <p class="pair-eyebrow">Performance Summary</p>
-          <h2>Harvest · Risk · Compounding · Concentration</h2>
-        </div>
-      </div>
-      <div id="perfPanel"><div class="empty-state">Run simulation first</div></div>
-    </div>
-
-    <!-- Equity chart -->
-    <div class="card">
-      <div class="card-head">
-        <div>
-          <p class="pair-eyebrow">Portfolio Value over Time</p>
-          <h2>AMM Total · Hold · Cash Profit · yellow = swap events</h2>
+          <p class="pair-eyebrow">Portfolio Value Over Time</p>
+          <h2>AMM Pool · Buy &amp; Hold · Cash Earned</h2>
         </div>
       </div>
       <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
+      <p class="chart-legend-hint">Yellow lines = trade events · Green dashed lines = ♻ reinvestment · Red shading = trading paused</p>
     </div>
 
-    <!-- Alpha chart -->
     <div class="card">
       <div class="card-head">
         <div>
-          <p class="pair-eyebrow">Net Alpha &amp; Impermanent Loss</p>
-          <h2>Alpha ₹ · IL% (scaled ×1000) · red shading = halted</h2>
+          <p class="pair-eyebrow">Net Profit vs Hold &amp; Unrealised Loss</p>
+          <h2>Alpha ₹ · IL% (scaled ×1000 for visibility)</h2>
         </div>
       </div>
       <div class="chart-wrap"><canvas id="alphaChart"></canvas></div>
+      <p class="chart-legend-hint">Yellow lines = trade events · Green dashed lines = ♻ reinvestment · Red shading = trading paused</p>
     </div>
 
-    <!-- Trade table -->
+    <!-- Mini stats -->
+    <div class="card">
+      <div class="card-head"><div><p class="pair-eyebrow">Performance Breakdown</p><h2>Trade Quality · Compounding · Risk</h2></div></div>
+      <div id="miniStats"><div class="empty-state">Run simulation first</div></div>
+    </div>
+
+    <!-- Trade ledger -->
     <div class="card">
       <div class="card-head">
         <div>
-          <p class="pair-eyebrow">Trade History</p>
-          <h2>V3 swaps with optimal α*, θ_eff, concentration, full P&amp;L</h2>
+          <p class="pair-eyebrow">Full Activity Ledger</p>
+          <h2>Every trade and reinvestment — timestamped</h2>
         </div>
         <span id="swapCount" class="count-pill hidden"></span>
       </div>
-      <div id="tableWrap"><div class="empty-state">No trades yet</div></div>
+      <div id="tableWrap"><div class="empty-state">No activity yet</div></div>
     </div>
 
   </section>
 </main>
-
 <script type="module" src="/app.js"></script>
 </body>
 </html>
