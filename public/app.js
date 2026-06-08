@@ -148,46 +148,65 @@ function renderStats(r, a1, a2) {
 }
 
 // ── Charts ─────────────────────────────────────────────────────────────────
+const _chartObservers = [];
+
 function renderCharts() {
   const equity = state.equity;
   if (!equity.length) return;
 
+  _chartObservers.forEach(o => o.disconnect());
+  _chartObservers.length = 0;
+
   const step = Math.max(1, Math.floor(equity.length / 600));
   const pts   = equity.filter((_, i) => i % step === 0);
 
-  // Legend 1
   $('legend1').innerHTML = `
     <div class="leg"><div class="leg-line" style="background:#60a5fa"></div>AMM Pool</div>
-    <div class="leg"><div class="leg-line" style="background:#888"></div>Buy &amp; Hold</div>
+    <div class="leg"><div class="leg-line" style="background:#666"></div>Buy &amp; Hold</div>
     <div class="leg"><div class="leg-line" style="background:#4ade80"></div>Cash Earned</div>
     <div class="leg"><div class="leg-dash"></div>Reinvestment</div>`;
 
   $('legend2').innerHTML = `
     <div class="leg"><div class="leg-line" style="background:#fbbf24"></div>Net Profit vs Hold</div>
-    <div class="leg"><div class="leg-line" style="background:#f87171"></div>Unrealised Loss × 1000</div>
+    <div class="leg"><div class="leg-line" style="background:#f87171"></div>Unrealised Loss x1000</div>
     <div class="leg"><div class="leg-dash"></div>Reinvestment</div>`;
 
-  drawChart($('chart1'), pts, [
-    { key: 'poolValue',  color: '#60a5fa' },
-    { key: 'holdValue',  color: '#555' },
-    { key: 'cashProfit', color: '#4ade80' },
-  ]);
+  const charts = [
+    { id: 'chart1', series: [
+        { key: 'poolValue',  color: '#60a5fa' },
+        { key: 'holdValue',  color: '#555' },
+        { key: 'cashProfit', color: '#4ade80' },
+      ]},
+    { id: 'chart2', series: [
+        { key: 'alphaINR', color: '#fbbf24' },
+        { key: 'ilPct',    color: '#f87171', scale: 1000 },
+      ]},
+  ];
 
-  drawChart($('chart2'), pts, [
-    { key: 'alphaINR', color: '#fbbf24' },
-    { key: 'ilPct',    color: '#f87171', scale: 1000 },
-  ]);
+  for (const { id, series } of charts) {
+    const canvas = $(id);
+    if (!canvas) continue;
+    // draw after layout flush
+    requestAnimationFrame(() => drawChart(canvas, pts, series));
+    // redraw on resize (orientation change, etc.)
+    const ro = new ResizeObserver(() => requestAnimationFrame(() => drawChart(canvas, pts, series)));
+    ro.observe(canvas.parentElement);
+    _chartObservers.push(ro);
+  }
 }
 
 function drawChart(canvas, data, series) {
   if (!canvas || !data.length) return;
-  const dpr  = window.devicePixelRatio || 1;
-  const rect = canvas.getBoundingClientRect();
-  canvas.width  = rect.width  * dpr;
-  canvas.height = rect.height * dpr;
+  const wrapper = canvas.parentElement;
+  const W = wrapper.clientWidth  || wrapper.offsetWidth;
+  const H = wrapper.clientHeight || wrapper.offsetHeight;
+  if (!W || !H) return;  // layout not ready yet — ResizeObserver will retry
+
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
-  const W = rect.width, H = rect.height;
   const P = { t: 12, r: 12, b: 32, l: 72 };
   const cW = W - P.l - P.r, cH = H - P.t - P.b;
 
