@@ -38,8 +38,9 @@ function getConfig() {
     sigmaMultiplier:       +$('sigmaMultiplier').value,
     compoundIntervalHours: +$('compoundIntervalHours').value,
     compoundMinPct:        +$('compoundMinPct').value,
-    ilHardStopPct:         +$('ilHardStopPct').value,
-    ilHardResumePct:       +$('ilHardResumePct').value,
+    ilHardStopPct:           +$('ilHardStopPct').value,
+    ilHardResumePct:         +$('ilHardResumePct').value,
+    reinvestBrokeragePct:    +$('reinvestBrokeragePct').value,
   };
 }
 
@@ -129,6 +130,8 @@ function renderStats(r, a1, a2) {
     { label: 'Unrealised loss (IL)',      value: pct(r.ilPct, 2),        cls: r.ilPct >= 0 ? 'up' : 'down' },
     { label: 'Gross fees earned',         value: inr(r.grossSwapFees),   cls: '' },
     { label: 'Brokerage paid',            value: inr(r.totalBrokerage),  cls: 'down' },
+    { label: 'Reinvest brokerage',         value: inr(r.totalReinvestBrokerage ?? 0), cls: 'down' },
+    { label: 'Rounding adj (diagnostic)',  value: inr(r.roundingAdjTotal ?? 0),       cls: Math.abs(r.roundingAdjTotal ?? 0) < 500 ? '' : 'down' },
     { label: 'Pool asset value',          value: inr(r.poolAssets),      cls: '' },
     { label: 'AMM total value',           value: inr(r.totalValue),      cls: '' },
     { label: 'Trades executed',           value: r.totalSwaps,           cls: '' },
@@ -338,10 +341,12 @@ function renderLedger(a1, a2) {
         <td>${fdt(row.date)}</td>
         <td colspan="5">
           <span class="compound-tag">REINVEST #${row.compoundEvent}</span>
-          ${inr(row.reinvestAmt)} → pool · L: ${dec(row.lBefore,0)} → ${dec(row.lAfter,0)} · ${a1}: ${qty(row.xBefore)}→${qty(row.xAfter)} · ${a2}: ${qty(row.yBefore)}→${qty(row.yAfter)}
+          Gross: ${inr(row.grossReinvest ?? row.reinvestAmt)} · Brok: ${inr(row.brokReinvest ?? 0)} · Net to pool: ${inr(row.reinvestAmt)}
+          · L: ${dec(row.lBefore,0)} → ${dec(row.lAfter,0)}
+          · ${a1}: ${qty(row.xBefore)}→${qty(row.xAfter)} · ${a2}: ${qty(row.yBefore)}→${qty(row.yAfter)}
         </td>
         <td class="r up">+${inr(row.reinvestAmt)}</td>
-        <td class="r">—</td>
+        <td class="r down">−${inr(row.brokReinvest ?? 0)}</td>
         <td class="r">${inr(row.cashProfitAfter)}</td>
         <td class="r">${qty(row.xAfter)}</td>
         <td class="r">${qty(row.yAfter)}</td>
@@ -386,7 +391,7 @@ function exportCsv(ledger) {
   const lines = [h.join(',')].concat(ledger.map(r => {
     if (r.type === 'COMPOUND') return [
       r.date, 'COMPOUND', '"Reinvestment"', '', '', '', '',
-      '', '', dec(r.cashProfitAfter,2), dec(r.reinvestAmt,2),
+      '', dec(r.brokReinvest??0,2), dec(r.cashProfitAfter,2), dec(r.reinvestAmt,2),
       qty(r.xAfter).replace(/,/g,''), qty(r.yAfter).replace(/,/g,''),
       dec(r.ilPct,4), dec(r.concentration??0,2), dec(r.lAfter,2),
     ].join(',');

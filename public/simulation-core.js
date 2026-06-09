@@ -1,60 +1,42 @@
-// simulation-core.js  —  Uniswap V3 with Calculus-Optimal Range Engine
-// ─────────────────────────────────────────────────────────────────────
+// simulation-core.js  —  Uniswap V3 Concentrated Liquidity  (v4.1 — rounding fixes)
+// ─────────────────────────────────────────────────────────────────────────────
 //
-//  CORE CALCULUS: Optimal Range via Lagrangian Maximisation
-//  ─────────────────────────────────────────────────────────
-//  We maximise fee-yield F(rLow, rHigh) subject to IL constraint IL ≤ θ.
+//  ROUNDING-ERROR FIXES (v4.1)
+//  ────────────────────────────
+//  Root cause: independent Math.round() on both legs of every swap breaks the
+//  V3 invariant and silently adds/removes value.
 //
-//  Fee yield per unit L is proportional to:
-//    F ∝ concentration factor C(a,b) = 1 / (1 − √(a/b))
-//  where a = rLow/rCenter, b = rHigh/rCenter (normalised).
+//  Fix strategy:
+//  1. SELL side is rounded first (floor, not round — never sell more than held).
+//  2. BUY side is derived from sell proceeds so the trade is always self-funding:
+//       buyQty = floor(sellRevenue / buyPrice)   [whole shares the proceeds cover]
+//     This guarantees revenue ≥ cost before brokerage, which is the only condition
+//     for a real-world profitable round-trip.
+//  3. Recenter rounding residual is reconciled: after rounding xShares/yShares,
+//     the ₹ difference vs the exact fractional position is added to cashProfit
+//     as a "rounding adjustment" (could be small positive or negative).
+//  4. Compound rounding residual is reconciled the same way.
+//  5. No trade executes if buyQty < 1 or sellQty < 1.
 //
-//  Impermanent Loss for a V3 position (exact, Adams et al.):
-//    IL(r, a, b) = 2√(r/rCenter)/(1 + r/rCenter) − 1   [in-range IL formula]
-//  Evaluated at the range boundaries this gives the "worst-case IL":
-//    IL_worst = 2√a/(1+a) − 1   (at lower boundary, symmetric worst case)
+//  UNISWAP V3 MATHEMATICS (Adams et al. 2021)
+//  ─────────────────────────────────────────────
+//  Core invariant within [p_lower, p_upper]:
+//    (x + L/√p_upper) × (y + L×√p_lower) = L²
 //
-//  Optimal half-width α* via dL/dα = 0 (Lagrangian):
-//    Objective: maximise  C(α) = 1/(1 − 1/√(1+α)) − 1/(1 − √(1−α))
-//    Subject to: IL_worst(α) ≤ θ
+//  Virtual reserves at ratio r ∈ [rLow, rHigh]:
+//    x_virtual = L × (1/√r   − 1/√rHigh)
+//    y_virtual = L × (√r     −   √rLow)
 //
-//  Closed-form approximation (2nd-order Taylor + Lagrange multiplier):
-//    C(α) ≈ 2/α  (dominant term for small α)
-//    IL(α) ≈ α²/8  →  θ = α²/8  →  α* = √(8θ)
+//  Swap delta (rOld → rNew, both in range):
+//    Δx = L × (1/√rNew − 1/√rOld)
+//    Δy = L × (√rNew   −   √rOld)
 //
-//  We refine this numerically using Newton-Raphson on the exact formula.
+//  Optimal half-width via Lagrangian:
+//    f(α) = 2√(1−α)/(2−α) − 1 + θ = 0   solved by Newton-Raphson
 //
-//  ADAPTIVE RANGE: Each recenter recomputes α* from:
-//    1. Price divergence: σ_r (rolling std of log-ratio returns)
-//    2. Inventory imbalance: δ = |xVal − yVal| / (xVal + yVal)
-//    3. IL budget θ: starts at ilBudget, shrinks as cashROI builds
-//       (alpha protection: θ_eff = max(ilBudget × (1 − cashROI/protectCap), θ_min))
-//
-//  Dynamic IL budget:
-//    θ_eff = ilBudget × exp(−λ × cashROI / initCapital)
-//    λ controls how quickly the budget shrinks as alpha accumulates.
-//
-//  Range asymmetry (inventory skew):
-//    When pool is Asset1-heavy (xVal > yVal):
-//      rLow  = rCenter × (1 − α* × (1 + δ_skew))   [wider downside]
-//      rHigh = rCenter × (1 + α* × (1 − δ_skew))   [tighter upside]
-//    Rationale: wider downside absorbs more Asset1 → more rebalancing swaps.
-//
-//  PROFIT COMPOUNDING:
-//    Cash profits are periodically reinvested as additional liquidity (L boost).
-//    Every compoundIntervalHours, if cashProfit > compoundThreshold:
-//      ΔL = computeL(cashProfitToReinvest, p1, p2, rCenter, rLow, rHigh)
-//      L  += ΔL    (and shares updated to reflect new L)
-//      reinvestedTotal += cashProfitToReinvest
-//      cashProfit -= cashProfitToReinvest   (moved into pool)
-//
-//  VOLATILITY-ADAPTIVE σ:
-//    σ_r = exponentially weighted std of hourly log(r_t / r_{t-1})
-//    EWMA with λ=0.94 (RiskMetrics standard).
-//    α*(σ) = α_calculus × (1 + σ_multiplier × σ_normalised)
-//    Wider range in volatile regimes reduces recenter frequency.
-//
-// ─────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── CSV ──────────────────────────────────────────────────────────────────────
 
 export function splitCsvLine(line) {
   const cells = []; let cur = '', q = false;
@@ -92,8 +74,7 @@ export function buildHourly(a1, a2) {
     if (t1 === t2) {
       const key = (() => { const d = new Date(a1[i].date); d.setMinutes(0,0,0); return d.toISOString(); })();
       if (!map.has(key)) map.set(key, { date: new Date(key), c1: a1[i].close, c2: a2[j].close });
-      const b = map.get(key);
-      b.c1 = a1[i].close; b.c2 = a2[j].close;
+      const b = map.get(key); b.c1 = a1[i].close; b.c2 = a2[j].close;
       i++; j++;
     } else if (t1 < t2) i++; else j++;
   }
@@ -102,22 +83,10 @@ export function buildHourly(a1, a2) {
 
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 
-// ─── CALCULUS ENGINE: Optimal Half-Width ──────────────────────────────────────
-//
-// Exact IL at lower boundary for a V3 range:
-//   IL(α) = 2√(1−α)/(2−α) − 1   [where α = 1 − rLow/rCenter]
-//
-// Fee concentration:
-//   C(α_low, α_high) = 1 / (1 − √((1−α_low)/(1+α_high)))
-//
-// We solve for α such that IL(α) = −θ (IL budget θ > 0)
-// using Newton-Raphson on f(α) = IL(α) + θ = 0.
-//
-// Returns optimal half-width α ∈ (0, 0.95)
+// ─── CALCULUS ENGINE ──────────────────────────────────────────────────────────
 
 function exactIL(alpha) {
-  // alpha = fractional downside distance from center (0 < alpha < 1)
-  const rRatio = 1 - alpha;  // rLow/rCenter
+  const rRatio = 1 - alpha;
   if (rRatio <= 0) return -1;
   return 2 * Math.sqrt(rRatio) / (1 + rRatio) - 1;
 }
@@ -126,21 +95,13 @@ function exactILDeriv(alpha) {
   const rRatio = 1 - alpha;
   if (rRatio <= 0) return 0;
   const sr = Math.sqrt(rRatio);
-  // d/d(alpha) [2√(1-α)/(2-α)] = d/d(rR) [2√rR/(1+rR)] × (-1)
-  // = −(1 − rR) / (sr × (1+rR)²)
   return -(1 - rRatio) / (sr * (1 + rRatio) ** 2);
 }
 
 function solveOptimalAlpha(theta, maxIter = 20) {
-  // theta = IL budget (0 < theta < 1), e.g. 0.05 = 5% max IL
-  // Initial guess from Taylor: alpha ≈ sqrt(8*theta)
   if (theta <= 0) return 0.05;
-  if (theta >= 0.5) return 0.85;  // very wide
-
-  let alpha = Math.sqrt(8 * theta);
-  alpha = clamp(alpha, 0.01, 0.90);
-
-  // Newton-Raphson: f(alpha) = exactIL(alpha) + theta = 0
+  if (theta >= 0.5) return 0.85;
+  let alpha = clamp(Math.sqrt(8 * theta), 0.01, 0.90);
   for (let i = 0; i < maxIter; i++) {
     const f  = exactIL(alpha) + theta;
     const fp = exactILDeriv(alpha);
@@ -152,73 +113,42 @@ function solveOptimalAlpha(theta, maxIter = 20) {
   return clamp(alpha, 0.03, 0.90);
 }
 
-// ─── Adaptive IL budget ───────────────────────────────────────────────────────
-//
-// θ_eff(t) = θ_base × exp(−λ × cashROI/100)
-// λ = 3 means budget halves after ~23% cashROI is accumulated.
-
 function adaptiveBudget(thetaBase, cashROIpct, lambda = 3.0, thetaMin = 0.01) {
-  const theta = thetaBase * Math.exp(-lambda * Math.max(0, cashROIpct) / 100);
-  return Math.max(thetaMin, theta);
+  return Math.max(thetaMin, thetaBase * Math.exp(-lambda * Math.max(0, cashROIpct) / 100));
 }
-
-// ─── EWMA Volatility ──────────────────────────────────────────────────────────
 
 function updateEWMA(prevVar, logReturn, lambda = 0.94) {
   return lambda * prevVar + (1 - lambda) * logReturn * logReturn;
 }
 
-// ─── Inventory skew factor ────────────────────────────────────────────────────
-//
-// Returns delta ∈ [−1, 1]:
-//   δ > 0: pool is Asset1-heavy → widen downside
-//   δ < 0: pool is Asset2-heavy → widen upside
-
 function inventorySkew(xShares, yShares, p1, p2) {
-  const xVal = xShares * p1;
-  const yVal = yShares * p2;
-  const total = xVal + yVal;
+  const xVal = xShares * p1, yVal = yShares * p2, total = xVal + yVal;
   if (total < 1e-6) return 0;
-  return (xVal - yVal) / total;  // +1 = all Asset1, -1 = all Asset2
+  return (xVal - yVal) / total;
 }
 
-// ─── Compute range from calculus ─────────────────────────────────────────────
-//
-// Returns { rLow, rHigh, alpha, concentrationFactor }
-
 function computeOptimalRange(rCenter, alpha, skew = 0, sigmaBoost = 0) {
-  // Volatility-adjusted alpha
   const alphaAdj = clamp(alpha * (1 + sigmaBoost), 0.03, 0.92);
-
-  // Asymmetric range based on inventory skew
-  const skewMag = clamp(Math.abs(skew), 0, 0.45);
+  const skewMag  = clamp(Math.abs(skew), 0, 0.45);
   let alphaDown, alphaUp;
-
   if (skew > 0) {
-    // Asset1 heavy: widen downside, tighten upside
     alphaDown = alphaAdj * (1 + skewMag * 0.6);
     alphaUp   = alphaAdj * (1 - skewMag * 0.4);
   } else {
-    // Asset2 heavy: widen upside, tighten downside
     alphaDown = alphaAdj * (1 - skewMag * 0.4);
     alphaUp   = alphaAdj * (1 + skewMag * 0.6);
   }
-
   alphaDown = clamp(alphaDown, 0.03, 0.88);
   alphaUp   = clamp(alphaUp,   0.03, 0.88);
-
   const rLow  = rCenter * (1 - alphaDown);
   const rHigh = rCenter * (1 + alphaUp);
-
-  const concentrationFactor = 1 / (1 - Math.sqrt(rLow / rHigh));
-
-  return { rLow, rHigh, alphaDown, alphaUp, concentrationFactor };
+  return { rLow, rHigh, alphaDown, alphaUp, concentrationFactor: 1 / (1 - Math.sqrt(rLow / rHigh)) };
 }
 
-// ─── V3 Core ──────────────────────────────────────────────────────────────────
+// ─── V3 CORE ──────────────────────────────────────────────────────────────────
 
 function computeL(capital, p1, p2, r, rLow, rHigh) {
-  const sr  = Math.sqrt(clamp(r,    rLow, rHigh));
+  const sr  = Math.sqrt(clamp(r, rLow, rHigh));
   const sra = Math.sqrt(rLow);
   const srb = Math.sqrt(rHigh);
   const denom = (1/sr - 1/srb) * p1 + (sr - sra) * p2;
@@ -229,30 +159,45 @@ function v3Reserves(L, r, rLow, rHigh) {
   const sr  = Math.sqrt(clamp(r, rLow, rHigh));
   const sra = Math.sqrt(rLow);
   const srb = Math.sqrt(rHigh);
-  return {
-    x: L * (1/sr - 1/srb),
-    y: L * (sr   - sra),
-  };
+  return { x: L * (1/sr - 1/srb), y: L * (sr - sra) };
 }
 
 function v3SwapDelta(L, rOld, rNew) {
-  const srOld = Math.sqrt(rOld);
-  const srNew = Math.sqrt(rNew);
-  const dx = L * (1/srNew - 1/srOld);
-  const dy = L * (srNew   -   srOld);
-  return { dx, dy };
+  return {
+    dx: L * (1/Math.sqrt(rNew) - 1/Math.sqrt(rOld)),
+    dy: L * (Math.sqrt(rNew)   -   Math.sqrt(rOld)),
+  };
 }
 
-// ─── Performance summary ───────────────────────────────────────────────────────
+// ─── ROUNDING RECONCILIATION ─────────────────────────────────────────────────
+//
+// When we round fractional share counts to integers we create a small ₹ residual.
+// We track this explicitly and add it to cashProfit so total portfolio value is
+// conserved.  A positive residual means rounding gave us slightly fewer shares
+// than the exact fractional amount (we "sold" the fraction for cash).
+// A negative residual means rounding gave us slightly more shares (we "bought"
+// the fraction from cash).
+//
+// residual = exactValue - roundedValue
+//          = (xFrac * p1 + yFrac * p2) - (xRound * p1 + yRound * p2)
+
+function reconcileRounding(xFrac, yFrac, p1, p2) {
+  const xRound = Math.max(1, Math.round(xFrac));
+  const yRound = Math.max(1, Math.round(yFrac));
+  const residual = (xFrac * p1 + yFrac * p2) - (xRound * p1 + yRound * p2);
+  return { xRound, yRound, residual };
+}
+
+// ─── PERFORMANCE SUMMARY ──────────────────────────────────────────────────────
 
 export function buildPerformanceSummary(swapRecords, equityCurve, results) {
   const ANNUALISE = Math.sqrt(252 * 6);
-
-  const grossFees     = swapRecords.reduce((s, r) => s + (r.gross ?? 0), 0);
+  const trades        = swapRecords.filter(r => r.type !== 'COMPOUND');
+  const grossFees     = trades.reduce((s, r) => s + (r.gross ?? 0), 0);
   const totalFriction = results.totalBrokerage;
   const frictionRatio = grossFees > 0 ? totalFriction / grossFees : 1;
-  const successful    = swapRecords.filter(r => (r.net ?? 0) > 0).length;
-  const successRate   = swapRecords.length > 0 ? successful / swapRecords.length : 0;
+  const successful    = trades.filter(r => (r.net ?? 0) > 0).length;
+  const successRate   = trades.length > 0 ? successful / trades.length : 0;
 
   const alpha = equityCurve.map(p => (p.poolValue ?? 0) - (p.holdValue ?? 0));
   let peak = alpha[0] ?? 0, maxDD = 0;
@@ -265,16 +210,15 @@ export function buildPerformanceSummary(swapRecords, equityCurve, results) {
   const sd = aRets.length > 1 ? Math.sqrt(v2 / (aRets.length - 1)) : 1e-9;
   const alphaSharpe = sd > 1e-12 ? (mr / sd) * ANNUALISE : 0;
 
-  const concentrationFactor = results.concentrationFactor ?? 1;
-
   return {
     grossFees, totalFriction,
     netSwapIncome: grossFees - totalFriction,
     frictionRatio, frictionRatioPct: frictionRatio * 100,
-    successfulSwaps: successful, totalSwaps: swapRecords.length,
+    successfulSwaps: successful, totalSwaps: trades.length,
     successRate, successRatePct: successRate * 100,
     maxDrawdownINR: maxDD, maxDrawdownPct: maxDDPct,
-    alphaSharpe, concentrationFactor,
+    alphaSharpe,
+    concentrationFactor: results.concentrationFactor ?? 1,
     unrealizedIL: results.ilINR,
     netAlphaFinal: results.vsHold,
     reinvestedTotal: results.reinvestedTotal ?? 0,
@@ -289,7 +233,7 @@ export function buildPerformanceSummary(swapRecords, equityCurve, results) {
                   : 'LOW — check brokerage vs. swap size',
       ilStatus: results.ilPct >= 0 ? 'POSITIVE — pool assets exceed hold value'
                : `NEGATIVE — ₹${Math.abs(results.ilINR).toLocaleString('en-IN', { maximumFractionDigits: 0 })} below hold`,
-      concentration: `Avg ${concentrationFactor.toFixed(1)}× amplification · calculus-optimal range`,
+      concentration: `Avg ${(results.concentrationFactor ?? 1).toFixed(1)}× amplification · calculus-optimal range`,
     },
   };
 }
@@ -306,54 +250,52 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   if (hourly.length < 2)
     return { error: 'No overlapping timestamps. Confirm both CSVs cover the same period.' };
 
-  // ── Config ───────────────────────────────────────────────────────────────────
-  const buyBrok  = clamp(+(config.buyBrokeragePct  ?? 0.15), 0, 5) / 100;
-  const sellBrok = clamp(+(config.sellBrokeragePct ?? 0.15), 0, 5) / 100;
+  // ── Config ────────────────────────────────────────────────────────────────────
+  const buyBrok    = clamp(+(config.buyBrokeragePct  ?? 0.15), 0, 5) / 100;
+  const sellBrok   = clamp(+(config.sellBrokeragePct ?? 0.15), 0, 5) / 100;
+  const reinvestBrok = clamp(+(config.reinvestBrokeragePct ?? 0.15), 0, 5) / 100;
 
-  // IL budget: base theta for optimal range calculation (e.g. 0.08 = 8% max IL)
   const ilBudgetPct    = clamp(+(config.ilBudgetPct ?? 8), 0.5, 40);
   const ilBudgetTheta  = ilBudgetPct / 100;
-
-  // Alpha protection: shrink IL budget as alpha grows
-  const alphaProtectCap   = clamp(+(config.alphaProtectCap ?? 15), 1, 100); // % cashROI at which budget → min
+  const alphaProtectCap    = clamp(+(config.alphaProtectCap ?? 15), 1, 100);
   const alphaProtectLambda = clamp(+(config.alphaProtectLambda ?? 3), 0.5, 10);
+  const sigmaMultiplier    = clamp(+(config.sigmaMultiplier ?? 2.0), 0, 10);
 
-  // Volatility: sigma multiplier for range widening
-  const sigmaMultiplier = clamp(+(config.sigmaMultiplier ?? 2.0), 0, 10);
-
-  // Compounding
   const compoundIntervalHours = clamp(+(config.compoundIntervalHours ?? 24), 1, 168);
-  const compoundMinPct        = clamp(+(config.compoundMinPct ?? 0.5), 0.01, 10); // min % of capital to trigger
+  const compoundMinPct        = clamp(+(config.compoundMinPct ?? 0.5), 0.01, 10);
 
-  // IL hard stop (optional, 0 = disabled)
-  const ilHardStopPct  = clamp(+(config.ilHardStopPct ?? 0), 0, 100);
+  const ilHardStopPct   = clamp(+(config.ilHardStopPct  ?? 0), 0, 100);
   const ilHardResumePct = clamp(+(config.ilHardResumePct ?? 0), 0, 100);
 
-  // ── Initialise ───────────────────────────────────────────────────────────────
-  const h0    = hourly[0];
-  const p1_0  = h0.c1, p2_0 = h0.c2;
+  // ── Initialise ────────────────────────────────────────────────────────────────
+  const h0   = hourly[0];
+  const p1_0 = h0.c1, p2_0 = h0.c2;
   let rCenter = p1_0 / p2_0;
 
-  // Initial optimal range (no volatility data yet, use base theta)
   const alpha0 = solveOptimalAlpha(ilBudgetTheta);
   const { rLow: rLow0, rHigh: rHigh0 } = computeOptimalRange(rCenter, alpha0);
-  let rLow  = rLow0;
-  let rHigh = rHigh0;
+  let rLow = rLow0, rHigh = rHigh0;
 
   let L = computeL(realCapital, p1_0, p2_0, rCenter, rLow, rHigh);
   if (L <= 0) return { error: 'Could not compute liquidity parameter. Check input data.' };
 
+  // Initialise integer share counts; reconcile rounding residual into cash
   const res0 = v3Reserves(L, rCenter, rLow, rHigh);
-  let xShares = Math.max(1, Math.round(res0.x));
-  let yShares = Math.max(1, Math.round(res0.y));
+  const { xRound: xInit0, yRound: yInit0, residual: initResidual } =
+    reconcileRounding(res0.x, res0.y, p1_0, p2_0);
 
-  const xInit     = xShares;
-  const yInit     = yShares;
-  const initCapital = xInit * p1_0 + yInit * p2_0;
+  let xShares = xInit0;
+  let yShares = yInit0;
 
-  // ── State ────────────────────────────────────────────────────────────────────
-  let rPrev           = rCenter;
-  let cashProfit      = 0;
+  // Hold reference — fixed at integer shares from t=0
+  const xInit = xShares;
+  const yInit = yShares;
+  // initCapital is what we actually deployed (integer shares × price + rounding residual)
+  const initCapital = xInit * p1_0 + yInit * p2_0 + initResidual;
+
+  // ── State ─────────────────────────────────────────────────────────────────────
+  let rPrev = rCenter;
+  let cashProfit      = initResidual;  // seed with rounding residual from initialisation
   let totalBrokerage  = 0;
   let grossSwapFees   = 0;
   let totalSwaps      = 0;
@@ -361,6 +303,8 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   let recenterCount   = 0;
   let reinvestedTotal = 0;
   let compoundEvents  = 0;
+  let totalReinvestBrokerage = 0;
+  let roundingAdjTotal = initResidual;  // diagnostic: total rounding adjustments
 
   let swapsHalted   = false;
   let haltReason    = null;
@@ -368,26 +312,25 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   let ilResumedAt   = null;
   let haltCount     = 0;
 
-  // EWMA variance of log ratio returns
   let ewmaVar = 0;
   let hoursSinceCompound = 0;
 
-  // Track current concentration factor for metrics
   let currentConcentration = 1 / (1 - Math.sqrt(rLow / rHigh));
-  let concentrationSum = currentConcentration;
+  let concentrationSum  = currentConcentration;
   let concentrationCount = 1;
 
   const swapRecords = [];
   const equityCurve = [];
-  const rangeLog    = [];  // record of range changes for visualisation
+  const rangeLog    = [];
 
   equityCurve.push({
     date: h0.date.toISOString(),
     poolValue: initCapital, holdValue: initCapital,
-    cashProfit: 0, alphaINR: 0, ilPct: 0,
+    cashProfit, alphaINR: 0, ilPct: 0,
     rCenter, rLow, rHigh, L,
     halted: false, haltReason: null,
     alpha: alpha0, concentration: currentConcentration,
+    compoundEvent: false,
   });
 
   // ── Hour loop ─────────────────────────────────────────────────────────────────
@@ -396,49 +339,43 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
     const p1   = row.c1, p2 = row.c2;
     const rNew = p1 / p2;
 
-    // Update EWMA volatility
     const logRet = Math.log(rNew / rPrev);
     ewmaVar = updateEWMA(ewmaVar, logRet);
-    const ewmaVol = Math.sqrt(ewmaVar);  // hourly vol of ratio
+    const ewmaVol = Math.sqrt(ewmaVar);
 
     hoursSinceCompound++;
 
-    // Current portfolio values
-    const pvNow     = xShares * p1 + yShares * p2;
-    const hvNow     = xInit   * p1 + yInit   * p2;
-    const ilPctNow  = hvNow > 0 ? (pvNow / hvNow - 1) * 100 : 0;
+    const pvNow    = xShares * p1 + yShares * p2;
+    const hvNow    = xInit   * p1 + yInit   * p2;
+    const ilPctNow = hvNow > 0 ? (pvNow / hvNow - 1) * 100 : 0;
     const cashROINow = initCapital > 0 ? cashProfit / initCapital * 100 : 0;
 
-    // ── Calculus: recompute optimal theta and alpha ───────────────────────────
     const thetaEff = adaptiveBudget(ilBudgetTheta, cashROINow, alphaProtectLambda, 0.015);
     const alphaOpt = solveOptimalAlpha(thetaEff);
 
-    // Volatility boost: wider range in volatile periods
-    // Normalise ewmaVol to a typical hourly vol (assume 0.5% typical)
-    const normSigma   = ewmaVol / 0.005;
-    const sigmaBoost  = sigmaMultiplier * clamp(normSigma - 1, 0, 3) * 0.1;
+    const normSigma  = ewmaVol / 0.005;
+    const sigmaBoost = sigmaMultiplier * clamp(normSigma - 1, 0, 3) * 0.1;
+    const skew       = inventorySkew(xShares, yShares, p1, p2);
 
-    // Inventory skew
-    const skew = inventorySkew(xShares, yShares, p1, p2);
-
-    // ── AUTO-RESUME ───────────────────────────────────────────────────────────
+    // ── Auto-resume ──────────────────────────────────────────────────────────
     if (swapsHalted && haltReason === 'IL_STOP') {
       if (ilHardResumePct > 0 && ilPctNow >= -ilHardResumePct) {
         swapsHalted = false; haltReason = null; ilResumedAt = row.date.toISOString();
       }
     }
 
-    // ── HALT CHECK ────────────────────────────────────────────────────────────
+    // ── Halt check ───────────────────────────────────────────────────────────
     if (!swapsHalted && ilHardStopPct > 0 && ilPctNow < -ilHardStopPct) {
       swapsHalted = true; haltReason = 'IL_STOP';
       ilHaltedAt  = row.date.toISOString(); haltCount++;
     }
 
-    // ── OUT OF RANGE → RECENTER with new calculus range ──────────────────────
+    // ── Out of range → recenter ───────────────────────────────────────────────
     if (rNew < rLow || rNew > rHigh) {
+      // Total portfolio value before recenter (includes cash)
       const capNow = xShares * p1 + yShares * p2;
-      rCenter = rNew;
 
+      rCenter = rNew;
       const rangeNew = computeOptimalRange(rCenter, alphaOpt, skew, sigmaBoost);
       rLow  = rangeNew.rLow;
       rHigh = rangeNew.rHigh;
@@ -446,9 +383,14 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
       L = computeL(capNow, p1, p2, rCenter, rLow, rHigh);
       if (L > 0) {
         const resNew = v3Reserves(L, rCenter, rLow, rHigh);
-        xShares = Math.max(1, Math.round(resNew.x));
-        yShares = Math.max(1, Math.round(resNew.y));
+        // FIX 3: reconcile rounding residual — add it to cash so value is conserved
+        const { xRound, yRound, residual } = reconcileRounding(resNew.x, resNew.y, p1, p2);
+        xShares = xRound;
+        yShares = yRound;
+        cashProfit     += residual;
+        roundingAdjTotal += residual;
       }
+
       rPrev = rCenter;
       recenterCount++;
 
@@ -468,33 +410,30 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
         rCenter, rLow, rHigh, L,
         halted: swapsHalted, haltReason,
         alpha: alphaOpt, concentration: currentConcentration,
+        compoundEvent: false,
       });
       continue;
     }
 
-    // ── IN RANGE → V3 SWAP ───────────────────────────────────────────────────
+    // ── In range → V3 swap ────────────────────────────────────────────────────
     if (!swapsHalted) {
       const { dx, dy } = v3SwapDelta(L, rPrev, rNew);
 
-      const absDx = Math.abs(dx);
-      const absDy = Math.abs(dy);
-      const dxInt = absDx >= 0.5 ? Math.round(absDx) : 0;
-      const dyInt = absDy >= 0.5 ? Math.round(absDy) : 0;
-
-      if (dxInt >= 1 && dyInt >= 1) {
-        if (dx < 0) {
-          // Ratio ROSE: pool releases Asset1, absorbs Asset2
-          // NSE: BUY dyInt Asset2, SELL dxInt Asset1
-          const sellQty = Math.min(dxInt, xShares - 1);
-          if (sellQty >= 1) {
-            const cost    = dyInt   * p2;
-            const revenue = sellQty * p1;
-            const brok    = buyBrok * cost + sellBrok * revenue;
-            const gross   = revenue - cost;
-            const net     = gross - brok;
+      if (dx < 0) {
+        // Ratio ROSE: sell Asset1, buy Asset2
+        // FIX 1+2: sell side rounded down (floor), buy qty derived from proceeds
+        const sellQty = Math.min(Math.floor(Math.abs(dx)), xShares - 1);
+        if (sellQty >= 1) {
+          const revenue = sellQty * p1;                          // exact proceeds
+          const cost    = Math.floor(revenue / p2) * p2;         // how many Asset2 shares proceeds buy
+          const buyQty  = Math.floor(revenue / p2);              // whole shares funded by proceeds
+          if (buyQty >= 1) {
+            const brok = buyBrok * cost + sellBrok * revenue;
+            const gross = revenue - cost;
+            const net   = gross - brok;
             if (net > 0) {
               xShares -= sellQty;
-              yShares += dyInt;
+              yShares += buyQty;
               cashProfit     += net;
               totalBrokerage += brok;
               grossSwapFees  += gross;
@@ -503,10 +442,10 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
               const pvS = xShares * p1 + yShares * p2;
               const hvS = xInit   * p1 + yInit   * p2;
               swapRecords.push({
-                date: row.date.toISOString(),
+                date: row.date.toISOString(), type: 'TRADE',
                 action: 'Buy Asset 2 / Sell Asset 1',
-                buyAsset: 'Asset 2', buyQty: dyInt,   cost,
-                sellAsset:'Asset 1', sellQty,          revenue,
+                buyAsset: 'Asset 2', buyQty,   cost,
+                sellAsset:'Asset 1', sellQty,  revenue,
                 gross, brok, net, cashProfit,
                 asset1Price: p1, asset2Price: p2,
                 poolX: xShares, poolY: yShares,
@@ -518,18 +457,22 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
               });
             }
           }
-        } else if (dx > 0) {
-          // Ratio FELL: pool releases Asset2, absorbs Asset1
-          // NSE: BUY dxInt Asset1, SELL dyInt Asset2
-          const sellQty = Math.min(dyInt, yShares - 1);
-          if (sellQty >= 1) {
-            const cost    = dxInt   * p1;
-            const revenue = sellQty * p2;
-            const brok    = buyBrok * cost + sellBrok * revenue;
-            const gross   = revenue - cost;
-            const net     = gross - brok;
+        }
+
+      } else if (dx > 0) {
+        // Ratio FELL: sell Asset2, buy Asset1
+        // FIX 1+2: sell side rounded down (floor), buy qty derived from proceeds
+        const sellQty = Math.min(Math.floor(Math.abs(dy)), yShares - 1);
+        if (sellQty >= 1) {
+          const revenue = sellQty * p2;
+          const cost    = Math.floor(revenue / p1) * p1;
+          const buyQty  = Math.floor(revenue / p1);
+          if (buyQty >= 1) {
+            const brok = buyBrok * cost + sellBrok * revenue;
+            const gross = revenue - cost;
+            const net   = gross - brok;
             if (net > 0) {
-              xShares += dxInt;
+              xShares += buyQty;
               yShares -= sellQty;
               cashProfit     += net;
               totalBrokerage += brok;
@@ -539,10 +482,10 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
               const pvS = xShares * p1 + yShares * p2;
               const hvS = xInit   * p1 + yInit   * p2;
               swapRecords.push({
-                date: row.date.toISOString(),
+                date: row.date.toISOString(), type: 'TRADE',
                 action: 'Buy Asset 1 / Sell Asset 2',
-                buyAsset: 'Asset 1', buyQty: dxInt,   cost,
-                sellAsset:'Asset 2', sellQty,          revenue,
+                buyAsset: 'Asset 1', buyQty,   cost,
+                sellAsset:'Asset 2', sellQty,  revenue,
                 gross, brok, net, cashProfit,
                 asset1Price: p1, asset2Price: p2,
                 poolX: xShares, poolY: yShares,
@@ -558,45 +501,53 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
       }
     }
 
-    // ── PROFIT COMPOUNDING ────────────────────────────────────────────────────
-    // Reinvest accumulated cash back into pool as additional L
+    // ── Profit compounding ────────────────────────────────────────────────────
     const compoundThreshold = initCapital * compoundMinPct / 100;
     let didCompound = false;
-    let compoundRecord = null;
     if (hoursSinceCompound >= compoundIntervalHours && cashProfit >= compoundThreshold) {
-      const reinvestAmt = cashProfit * 0.80;  // reinvest 80%, keep 20% as reserve
+      const grossReinvest = cashProfit * 0.80;
+      const brokReinvest  = grossReinvest * reinvestBrok;
+      const reinvestAmt   = grossReinvest - brokReinvest;
       const dL = computeL(reinvestAmt, p1, p2, rCenter, rLow, rHigh);
       if (dL > 0) {
         const lBefore = L;
         L += dL;
         const resUpd = v3Reserves(L, rNew, rLow, rHigh);
         const xBefore = xShares, yBefore = yShares;
-        xShares = Math.max(1, Math.round(resUpd.x));
-        yShares = Math.max(1, Math.round(resUpd.y));
-        reinvestedTotal += reinvestAmt;
-        cashProfit      -= reinvestAmt;
+        // FIX 4: reconcile rounding residual from compound share adjustment
+        const { xRound, yRound, residual: compResidual } =
+          reconcileRounding(resUpd.x, resUpd.y, p1, p2);
+        xShares = xRound;
+        yShares = yRound;
+        roundingAdjTotal += compResidual;
+
+        reinvestedTotal        += reinvestAmt;
+        totalReinvestBrokerage += brokReinvest;
+        totalBrokerage         += brokReinvest;
+        // deduct gross from cash; compound rounding residual reconciled separately
+        cashProfit  -= grossReinvest;
+        cashProfit  += compResidual;
         compoundEvents++;
         didCompound = true;
 
         const pvC = xShares * p1 + yShares * p2;
         const hvC = xInit   * p1 + yInit   * p2;
-        compoundRecord = {
+        swapRecords.push({
           date: row.date.toISOString(),
           type: 'COMPOUND',
           action: '♻ Profit Reinvested into Pool',
-          reinvestAmt,
+          grossReinvest, brokReinvest, reinvestAmt,
           lBefore, lAfter: L, dL,
           xBefore, yBefore,
           xAfter: xShares, yAfter: yShares,
           asset1Price: p1, asset2Price: p2,
-          cashProfitBefore: cashProfit + reinvestAmt,
+          cashProfitBefore: cashProfit + grossReinvest - compResidual,
           cashProfitAfter: cashProfit,
           poolValueAfter: pvC + cashProfit,
           ilPct: hvC > 0 ? (pvC / hvC - 1) * 100 : 0,
           concentration: currentConcentration,
           compoundEvent: compoundEvents,
-        };
-        swapRecords.push(compoundRecord);
+        });
       }
       hoursSinceCompound = 0;
     }
@@ -639,14 +590,15 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
     cashRoi:  initCapital > 0 ?  cashProfit  / initCapital * 100 : 0,
     brokRoi:  initCapital > 0 ?  totalBrokerage / initCapital * 100 : 0,
     ilINR, ilPct,
-    swapsHalted, haltReason, ilHaltedAt, ilResumedAt,
-    haltCount,
+    swapsHalted, haltReason, ilHaltedAt, ilResumedAt, haltCount,
     totalSwaps, successSwaps, recenterCount,
     successRate: totalSwaps > 0 ? successSwaps / totalSwaps : 0,
     initialX: xInit, initialY: yInit, finalX: xShares, finalY: yShares,
     concentrationFactor: avgConcentration,
     rCenter, rLow, rHigh, L,
-    reinvestedTotal, compoundEvents,
+    reinvestedTotal, compoundEvents, totalReinvestBrokerage,
+    reinvestBrokPct: reinvestBrok * 100,
+    roundingAdjTotal,   // diagnostic: total ₹ reconciled via rounding adjustments
     ilBudgetPct, alphaProtectCap,
     buyBrokeragePct: buyBrok * 100, sellBrokeragePct: sellBrok * 100,
   };
