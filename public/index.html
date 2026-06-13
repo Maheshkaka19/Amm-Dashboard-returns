@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>AMM Pool Simulator</title>
+  <title>Pair Rebalancing Strategy</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link rel="stylesheet" href="/styles.css"/>
@@ -11,84 +11,54 @@
 <body>
 <div class="shell">
 
-  <!-- SIDEBAR -->
   <aside class="sidebar">
 
     <div class="brand">
-      <h1>AMM Pool Simulator</h1>
-      <p>Concentrated liquidity engine for NSE stock pairs. Profits auto-reinvest into the pool.</p>
+      <h1>Pair Rebalancing</h1>
+      <p>Holds two NSE stocks at 50/50 value. Rebalances when one drifts beyond the band. Profit comes from mean-reversion — selling the risen stock and buying the fallen one.</p>
     </div>
 
     <div class="section">
       <div class="section-title">Assets</div>
-
       <div class="field">
-        <label for="asset1File">Asset 1</label>
+        <label>Asset 1 — 1-min CSV</label>
         <label class="upload" for="asset1File">
           <input id="asset1File" type="file" accept=".csv,text/csv"/>
-          <div class="upload-text">Upload 1-min CSV</div>
+          <div class="upload-text">Click to upload</div>
           <div id="asset1FileName" class="upload-name"></div>
         </label>
         <input id="asset1Label" type="text" value="Reliance" placeholder="Name"/>
       </div>
-
       <div class="field">
-        <label for="asset2File">Asset 2</label>
+        <label>Asset 2 — 1-min CSV</label>
         <label class="upload" for="asset2File">
           <input id="asset2File" type="file" accept=".csv,text/csv"/>
-          <div class="upload-text">Upload 1-min CSV</div>
+          <div class="upload-text">Click to upload</div>
           <div id="asset2FileName" class="upload-name"></div>
         </label>
         <input id="asset2Label" type="text" value="Kotak Bank" placeholder="Name"/>
       </div>
-
       <div class="field">
         <label>Capital (₹)</label>
         <input id="realCapital" type="number" value="2000000" step="100000" min="10000"/>
+        <span class="hint">Deployed 50/50 between the two stocks.</span>
       </div>
     </div>
 
     <hr/>
 
     <div class="section">
-      <div class="section-title">Risk</div>
+      <div class="section-title">Rebalance Settings</div>
       <div class="field">
-        <label>Max loss budget (%)</label>
-        <input id="ilBudgetPct" type="number" value="8" min="0.5" max="40" step="0.5"/>
-        <span class="hint">Engine sets concentration range to stay within this loss limit. Lower = safer.</span>
-      </div>
-      <div class="two-col">
-        <div class="field">
-          <label>Protection cap (%)</label>
-          <input id="alphaProtectCap" type="number" value="15" min="1" max="100"/>
-        </div>
-        <div class="field">
-          <label>Decay speed (λ)</label>
-          <input id="alphaProtectLambda" type="number" value="3" min="0.5" max="10" step="0.5"/>
-        </div>
+        <label>Rebalance band (%)</label>
+        <input id="bandPct" type="number" value="5" min="0.5" max="50" step="0.5"/>
+        <span class="hint">Rebalance when one stock's value drifts more than this % from the 50/50 target. Lower = more frequent trades. Higher = fewer trades.</span>
       </div>
       <div class="field">
-        <label>Volatility buffer</label>
-        <input id="sigmaMultiplier" type="number" value="2" min="0" max="10" step="0.5"/>
-        <span class="hint">Widens range during volatile periods to reduce resets.</span>
+        <label>Minimum trade value (₹)</label>
+        <input id="minTradeValue" type="number" value="5000" min="100" step="1000"/>
+        <span class="hint">Skip rebalances smaller than this to avoid paying brokerage on tiny amounts.</span>
       </div>
-    </div>
-
-    <hr/>
-
-    <div class="section">
-      <div class="section-title">Reinvestment</div>
-      <div class="two-col">
-        <div class="field">
-          <label>Every (hours)</label>
-          <input id="compoundIntervalHours" type="number" value="24" min="1" max="168"/>
-        </div>
-        <div class="field">
-          <label>Min trigger (%)</label>
-          <input id="compoundMinPct" type="number" value="0.5" min="0.01" max="10" step="0.1"/>
-        </div>
-      </div>
-      <span class="hint">80% of cash profit is reinvested as pool liquidity every interval.</span>
     </div>
 
     <hr/>
@@ -105,11 +75,28 @@
           <input id="sellBrokeragePct" type="number" value="0.15" min="0" max="5" step="0.01"/>
         </div>
       </div>
-      <div class="field" style="margin-top:6px">
+      <div class="field" style="margin-top:4px">
         <label>Reinvestment brokerage (%)</label>
         <input id="reinvestBrokeragePct" type="number" value="0.15" min="0" max="5" step="0.01"/>
-        <span class="hint">Charged when buying stocks to add profits back into the pool.</span>
+        <span class="hint">Charged when buying shares to reinvest profits.</span>
       </div>
+    </div>
+
+    <hr/>
+
+    <div class="section">
+      <div class="section-title">Reinvestment</div>
+      <div class="two-col">
+        <div class="field">
+          <label>Every (hours)</label>
+          <input id="compoundIntervalHours" type="number" value="24" min="1" max="168"/>
+        </div>
+        <div class="field">
+          <label>Min trigger (% capital)</label>
+          <input id="compoundMinPct" type="number" value="0.5" min="0.01" max="10" step="0.1"/>
+        </div>
+      </div>
+      <span class="hint">80% of accumulated cash profit is reinvested as additional shares.</span>
     </div>
 
     <hr/>
@@ -118,7 +105,7 @@
       <div class="section-title">Emergency Stop</div>
       <div class="two-col">
         <div class="field">
-          <label>Stop if loss > (%)</label>
+          <label>Stop if IL > (%)</label>
           <input id="ilHardStopPct" type="number" value="0" min="0" max="100" step="0.5"/>
         </div>
         <div class="field">
@@ -126,64 +113,56 @@
           <input id="ilHardResumePct" type="number" value="0" min="0" max="100" step="0.5"/>
         </div>
       </div>
-      <span class="hint">0 = disabled. The engine manages IL automatically.</span>
+      <span class="hint">0 = disabled.</span>
     </div>
 
-    <button id="runSimulation" class="run-btn">Run Simulation</button>
+    <button id="runSimulation" class="run-btn">Run Backtest</button>
 
   </aside>
 
-  <!-- CONTENT -->
   <main class="content">
 
-    <div id="statusBar" class="status">Upload two CSV files and click Run Simulation.</div>
+    <div id="statusBar" class="status">Upload two CSV files and click Run Backtest.</div>
 
-    <!-- Results -->
     <div id="resultsSection" class="hidden">
 
       <div class="sec-head">
         <h2 id="pairHeading">Reliance ↔ Kotak Bank</h2>
-        <button id="exportBtn" class="export-btn">Export CSV</button>
+        <button id="exportBtn" class="export-btn hidden">Export CSV</button>
       </div>
 
-      <!-- Hero numbers -->
       <div class="hero-row" id="heroRow"></div>
+      <div class="stat-grid" id="statGrid" style="margin-top:16px"></div>
 
-      <!-- Stat grid -->
-      <div class="stat-grid" id="statGrid" style="margin-top:20px"></div>
+      <div id="perfPanel" style="margin-top:20px"></div>
 
-      <!-- Charts -->
-      <div class="chart-block" style="margin-top:24px">
+      <div class="chart-block" style="margin-top:20px">
         <div class="legend" id="legend1"></div>
         <div class="chart-wrap"><canvas id="chart1"></canvas></div>
-        <div class="chart-label">Yellow ticks = trades &nbsp;·&nbsp; Green dashed = reinvestments &nbsp;·&nbsp; Red tint = paused</div>
+        <div class="chart-label">Yellow ticks = rebalance · Green dashed = reinvestment · Red tint = halted</div>
       </div>
 
       <div class="chart-block">
         <div class="legend" id="legend2"></div>
         <div class="chart-wrap"><canvas id="chart2"></canvas></div>
-        <div class="chart-label">Net profit vs hold (₹) &nbsp;·&nbsp; Unrealised loss % scaled ×1000</div>
+        <div class="chart-label">Net profit vs hold (₹) · IL % scaled ×100</div>
       </div>
 
-      <!-- Ledger -->
       <div>
         <div class="sec-head">
           <h2>Activity Ledger</h2>
           <span id="ledgerCount" class="count-tag"></span>
         </div>
         <div id="ledgerNote" class="tbl-note hidden"></div>
-        <div class="tbl-wrap" id="ledgerWrap">
-          <div class="empty">No activity yet.</div>
-        </div>
+        <div id="ledgerWrap"><div class="empty">No activity yet.</div></div>
       </div>
 
-    </div><!-- /resultsSection -->
+    </div>
 
-    <div id="emptyState" class="empty">Upload two 1-minute CSV files and click Run Simulation.</div>
+    <div id="emptyState" class="empty">Upload two 1-minute NSE CSV files and click Run Backtest.</div>
 
   </main>
 </div>
-
 <script type="module" src="/app.js"></script>
 </body>
 </html>

@@ -307,3 +307,26 @@ td.down             { color: var(--red); }
 ::-webkit-scrollbar       { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 4px; }
+
+/* ── Performance panel ── */
+.mini-stat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; }
+.ms-box { background:rgba(3,6,16,0.55); border-radius:10px; border:1px solid var(--line); padding:14px; }
+.ms-title { font-size:12px; font-weight:600; margin-bottom:10px; }
+.ms-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; font-size:12px; font-family:'JetBrains Mono',monospace; }
+.ms-row span { color:var(--muted); }
+.ms-row strong { color:var(--text); }
+.ms-row strong.pos { color:var(--green); }
+.ms-row strong.neg { color:var(--red); }
+.ms-row strong.teal { color:var(--teal); }
+.ms-badge { margin-top:10px; border-radius:5px; padding:5px 8px; font-size:11px; font-family:'JetBrains Mono',monospace; line-height:1.4; border:1px solid; }
+.badge-green  { background:rgba(74,222,128,0.07); border-color:rgba(74,222,128,0.20); color:#86efac; }
+.badge-yellow { background:rgba(251,191,36,0.07); border-color:rgba(251,191,36,0.18); color:#fde68a; }
+.badge-red    { background:rgba(248,113,113,0.07); border-color:rgba(248,113,113,0.18); color:#fca5a5; }
+.badge-blue   { background:rgba(96,165,250,0.07); border-color:rgba(96,165,250,0.16); color:#bfdbfe; }
+
+/* ── Legend row above table ── */
+.legend-row { display:flex; gap:18px; flex-wrap:wrap; margin-bottom:10px; font-size:11px; color:var(--muted); }
+.leg-item { display:flex; align-items:center; gap:6px; }
+.leg-dot  { width:10px; height:10px; border-radius:2px; flex-shrink:0; }
+.swap-dot { background:rgba(251,191,36,0.55); }
+.comp-dot { background:rgba(45,212,191,0.65); }
