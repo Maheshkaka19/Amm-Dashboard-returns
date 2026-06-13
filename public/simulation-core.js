@@ -1,47 +1,43 @@
-// simulation-core.js  v5.0  —  Real-world pair rebalancing backtest
+// simulation-core.js  v5.1  —  Real-world 50/50 pair rebalancing
 // ─────────────────────────────────────────────────────────────────
 //
-// WHAT THIS MODELS
-// ─────────────────
-// A portfolio holds two NSE stocks (Asset1, Asset2).
-// Every hour it checks: has the VALUE RATIO drifted outside a target band?
-//   valueRatio = (xShares * p1) / (yShares * p2)
+//  STRATEGY
+//  ─────────
+//  Hold two NSE stocks. Every hour, compute what a perfect 50/50 split
+//  by value looks like at current prices. If the target share counts
+//  differ from what the portfolio holds, execute the rebalance trade.
 //
-// If yes, it rebalances back to a 50/50 value split by:
-//   - selling shares of the stock that has become over-weight
-//   - buying shares of the stock that has become under-weight
-//   - paying real NSE brokerage (STT, exchange fees, etc.) on both legs
+//  No band. No minimum trade filter. The market moves every hour and the
+//  portfolio responds every hour. That is what a real automated system does.
 //
-// This IS a real executable strategy. Every number here can be verified
-// against a real NSE brokerage statement.
+//  WHAT IS TRADEABLE EACH HOUR
+//  ────────────────────────────
+//  Total portfolio value V = xShares*p1 + yShares*p2
+//  Target shares of Asset1: x_target = floor(V/2 / p1)
+//  Target shares of Asset2: y_target = floor(V/2 / p2)
 //
-// WHAT DRIVES RETURNS
-// ────────────────────
-// The strategy profits when prices MEAN-REVERT:
-//   Step 1: Asset1 rises → it becomes over-weight → we sell some Asset1 HIGH
-//   Step 2: Asset1 falls back → Asset2 becomes over-weight → we sell some Asset2 HIGH
-//   Net: sold Asset1 high, sold Asset2 when it was high = bought low on both
+//  If x_target > xShares  → buy (x_target - xShares) Asset1
+//                           sell enough Asset2 to fund it
+//  If x_target < xShares  → sell (xShares - x_target) Asset1
+//                           buy Asset2 with the proceeds
 //
-// The strategy LOSES when prices TREND:
-//   If Asset1 keeps rising, every rebalance sells the winner and buys the loser.
-//   We accumulate the losing asset at progressively worse prices.
+//  Both legs are sized from the same ₹ amount so they are always self-funding.
+//  Brokerage is charged on both legs. Net P&L = gross − brokerage.
+//  Cash account accumulates net P&L; can go negative.
 //
-// REAL COSTS INCLUDED
-// ────────────────────
-//  1. Brokerage on both legs of every trade (configurable, default 0.30% round-trip)
-//  2. Minimum trade size: only rebalance if trade value >= minTradeValue (avoids
-//     churning tiny amounts and paying brokerage on them)
-//  3. Rebalance only when drift > band threshold (avoids over-trading)
-//  4. No look-ahead: decision at time T uses only prices at time T
-//  5. Reinvestment brokerage: when cash profit is reinvested, brokerage is charged
+//  GROSS P&L PER TRADE (correct definition)
+//  ──────────────────────────────────────────
+//  gross = sell_proceeds − buy_cost
+//        = sellQty*pSell − buyQty*pBuy
 //
-// WHAT IS NOT INFLATED
-// ─────────────────────
-//  - No fee income from phantom external traders
-//  - No floor-division arithmetic remainder counted as profit
-//  - No phantom shares created by rounding
-//  - Brokerage can exceed gross profit → trade is skipped
-//  - cashProfit can go negative if trades cost more than they earn
+//  This is positive when the sold asset's total value exceeds the bought
+//  asset's total value. It is zero when prices are equal. It can be
+//  negative. It has NOTHING to do with floor-division remainder.
+//
+//  COMPOUNDING
+//  ────────────
+//  Accumulated cash profit is reinvested as additional shares every N hours.
+//  Brokerage is charged on reinvestment. Shares are bought at current prices.
 //
 // ─────────────────────────────────────────────────────────────────
 
@@ -62,7 +58,9 @@ export function parseCsv(text) {
   const headers = splitCsvLine(lines[0]).map(h => h.trim().toLowerCase());
   return lines.slice(1).map(line => {
     const cells = splitCsvLine(line);
-    return headers.reduce((row, h, i) => { row[h] = (cells[i] || '').trim(); return row; }, {});
+    return headers.reduce((row, h, i) => {
+      row[h] = (cells[i] || '').trim(); return row;
+    }, {});
   });
 }
 
@@ -92,20 +90,18 @@ export function buildHourly(a1, a2) {
 
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 
-// ─── EWMA volatility ──────────────────────────────────────────────────────────
 function updateEWMA(prevVar, logRet, lam = 0.94) {
   return lam * prevVar + (1 - lam) * logRet * logRet;
 }
 
 // ─── Performance summary ──────────────────────────────────────────────────────
-export function buildPerformanceSummary(trades, equityCurve, results) {
-  const ANNUALISE = Math.sqrt(252 * 6.5); // hourly bars, ~6.5 trading hours/day
-
-  const realTrades    = trades.filter(t => t.type === 'TRADE');
-  const grossTotal    = realTrades.reduce((s, t) => s + t.gross, 0);
-  const brokTotal     = realTrades.reduce((s, t) => s + t.brok,  0);
-  const profitable    = realTrades.filter(t => t.net > 0).length;
-  const successRate   = realTrades.length > 0 ? profitable / realTrades.length : 0;
+export function buildPerformanceSummary(ledger, equityCurve, results) {
+  const ANNUALISE = Math.sqrt(252 * 6.5);
+  const trades     = ledger.filter(t => t.type === 'TRADE');
+  const grossTotal = trades.reduce((s, t) => s + t.gross, 0);
+  const brokTotal  = trades.reduce((s, t) => s + t.brok,  0);
+  const profitable = trades.filter(t => t.net > 0).length;
+  const successRate = trades.length > 0 ? profitable / trades.length : 0;
   const frictionRatio = Math.abs(grossTotal) > 0 ? brokTotal / Math.abs(grossTotal) : 1;
 
   const alpha = equityCurve.map(p => p.poolValue - p.holdValue);
@@ -114,40 +110,38 @@ export function buildPerformanceSummary(trades, equityCurve, results) {
     if (v > peak) peak = v;
     if (v - peak < maxDD) maxDD = v - peak;
   }
-  const maxDDPct = results.holdValue > 0 ? (maxDD / results.holdValue) * 100 : 0;
+  const maxDDPct = results.holdValue > 0 ? maxDD / results.holdValue * 100 : 0;
 
   const aRets = alpha.slice(1).map((v, i) => v - alpha[i]);
   const mr = aRets.length ? aRets.reduce((s, v) => s + v, 0) / aRets.length : 0;
   let vv = 0; for (const v of aRets) vv += (v - mr) ** 2;
   const sd = aRets.length > 1 ? Math.sqrt(vv / (aRets.length - 1)) : 1e-9;
-  const sharpe = sd > 1e-12 ? (mr / sd) * ANNUALISE : 0;
 
   return {
     grossTotal, brokTotal, netCash: results.cashProfit,
     frictionRatio, frictionPct: frictionRatio * 100,
-    totalTrades: realTrades.length, profitable,
+    totalTrades: trades.length, profitable,
     successRate, successPct: successRate * 100,
     maxDrawdownINR: maxDD, maxDrawdownPct: maxDDPct,
-    alphaSharpe: sharpe,
+    alphaSharpe: sd > 1e-12 ? (mr / sd) * ANNUALISE : 0,
     reinvestedTotal: results.reinvestedTotal,
     compoundEvents:  results.compoundEvents,
     narrative: {
-      friction: frictionRatio < 0.40 ? 'ACCEPTABLE — friction < 40% of gross'
-               : frictionRatio < 0.80 ? 'HIGH — consider wider band or lower frequency'
-               : 'VERY HIGH — brokerage likely exceeds trading edge',
-      quality: successRate > 0.55 ? 'GOOD — majority profitable (pair mean-reverts)'
-             : successRate > 0.45 ? 'MIXED — near 50/50 (weak mean-reversion)'
+      friction: frictionRatio < 0.40 ? 'ACCEPTABLE — brokerage < 40% of gross P&L'
+               : frictionRatio < 0.80 ? 'HIGH — brokerage eroding most of the edge'
+               : 'VERY HIGH — brokerage exceeds trading edge',
+      quality: successRate > 0.55 ? 'GOOD — pair is mean-reverting'
+             : successRate > 0.45 ? 'MIXED — weak mean-reversion'
              : 'POOR — pair is trending, not mean-reverting',
       alpha: results.vsHold >= 0
-        ? `Strategy outperforms hold by ₹${Math.abs(results.vsHold).toLocaleString('en-IN', {maximumFractionDigits:0})}`
-        : `Strategy underperforms hold by ₹${Math.abs(results.vsHold).toLocaleString('en-IN', {maximumFractionDigits:0})}`,
+        ? `Outperforms hold by ₹${Math.abs(results.vsHold).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
+        : `Underperforms hold by ₹${Math.abs(results.vsHold).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`,
     },
   };
 }
 
 // ─── MAIN BACKTEST ────────────────────────────────────────────────────────────
 export function runAlmSimulation(df1, df2, realCapital, config = {}) {
-
   const a1 = normalizeRows(df1);
   const a2 = normalizeRows(df2);
   if (!a1.length || !a2.length)
@@ -158,58 +152,47 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
     return { error: 'Too few overlapping bars. Check timestamps match in both files.' };
 
   // ── Config ────────────────────────────────────────────────────────────────────
-  // Rebalance band: rebalance when value ratio drifts more than this from 1.0
-  // e.g. 0.05 = rebalance when one side is >5% heavier than the other
-  const bandPct      = clamp(+(config.bandPct      ?? 5),    0.5, 50)  / 100;
-  const buyBrok      = clamp(+(config.buyBrokeragePct  ?? 0.15), 0, 5) / 100;
-  const sellBrok     = clamp(+(config.sellBrokeragePct ?? 0.15), 0, 5) / 100;
+  const buyBrok      = clamp(+(config.buyBrokeragePct      ?? 0.15), 0, 5) / 100;
+  const sellBrok     = clamp(+(config.sellBrokeragePct     ?? 0.15), 0, 5) / 100;
   const reinvestBrok = clamp(+(config.reinvestBrokeragePct ?? 0.15), 0, 5) / 100;
 
-  // Minimum ₹ value of a single trade leg (avoid tiny churning trades)
-  const minTradeValue = clamp(+(config.minTradeValue ?? 5000), 100, 1e7);
-
-  // Hard IL stop
   const ilHardStop   = clamp(+(config.ilHardStopPct  ?? 0), 0, 100);
   const ilHardResume = clamp(+(config.ilHardResumePct ?? 0), 0, 100);
 
-  // Compounding
-  const compoundIntervalHours = clamp(+(config.compoundIntervalHours ?? 24),   1, 168);
+  const compoundIntervalHours = clamp(+(config.compoundIntervalHours ?? 24),  1, 168);
   const compoundMinPct        = clamp(+(config.compoundMinPct        ?? 0.5), 0.01, 10);
 
   // ── Initialise ────────────────────────────────────────────────────────────────
   const h0   = hourly[0];
   const p1_0 = h0.c1, p2_0 = h0.c2;
 
-  // Deploy capital 50/50 by value
-  const half     = realCapital / 2;
-  const xShares0 = Math.max(1, Math.floor(half / p1_0));
-  const yShares0 = Math.max(1, Math.floor(half / p2_0));
+  // Deploy capital 50/50 — integer shares only, no fractional positions
+  const xShares0 = Math.max(1, Math.floor(realCapital / 2 / p1_0));
+  const yShares0 = Math.max(1, Math.floor(realCapital / 2 / p2_0));
 
-  let xShares     = xShares0;
-  let yShares     = yShares0;
+  let xShares = xShares0;
+  let yShares = yShares0;
 
-  // Hold benchmark: same share counts, never rebalanced
+  // Hold benchmark — identical initial shares, never touched
   const xHold = xShares0;
   const yHold = yShares0;
 
-  // Actual capital deployed (integer shares × price, no phantom rounding)
+  // initCapital = exactly what was deployed (integer shares × price)
   const initCapital = xShares0 * p1_0 + yShares0 * p2_0;
 
-  // Cash account: starts at 0. Brokerage and trade P&L go here.
-  // Can go negative — that is real money owed.
+  // Cash account — accumulates net P&L from every trade, can go negative
   let cashProfit = 0;
 
   // ── State ─────────────────────────────────────────────────────────────────────
-  let totalBrokerage = 0;
-  let grossTotal     = 0;
-  let netTotal       = 0;
-  let totalTrades    = 0;
-  let profitableTrades = 0;
+  let totalBrokerage     = 0;
+  let grossTotal         = 0;
+  let netTotal           = 0;
+  let totalTrades        = 0;
+  let profitableTrades   = 0;
   let unprofitableTrades = 0;
-  let skippedTrades  = 0;   // wanted to trade but brok > gross
-  let reinvestedTotal = 0;
-  let compoundEvents  = 0;
-  let totalReinvestBrokerage = 0;
+  let reinvestedTotal    = 0;
+  let compoundEvents     = 0;
+  let totalReinvestBrok  = 0;
 
   let swapsHalted = false;
   let haltReason  = null;
@@ -217,172 +200,140 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   let ilResumedAt = null;
   let haltCount   = 0;
   let hoursSinceCompound = 0;
-
   let ewmaVar = 0;
 
   const ledger      = [];
   const equityCurve = [];
 
   equityCurve.push({
-    date:       h0.date.toISOString(),
-    poolValue:  initCapital,
-    holdValue:  initCapital,
-    cashProfit: 0,
-    alphaINR:   0,
-    ilPct:      0,
-    halted:     false,
-    compoundEvent: false,
+    date: h0.date.toISOString(),
+    poolValue: initCapital, holdValue: initCapital,
+    cashProfit: 0, alphaINR: 0, ilPct: 0,
+    halted: false, compoundEvent: false,
   });
 
-  // ── Bar loop ──────────────────────────────────────────────────────────────────
+  // ── Hour loop ─────────────────────────────────────────────────────────────────
   for (let idx = 1; idx < hourly.length; idx++) {
-    const row  = hourly[idx];
-    const p1   = row.c1;
-    const p2   = row.c2;
+    const row = hourly[idx];
+    const p1  = row.c1, p2 = row.c2;
+    const prev = hourly[idx - 1];
 
-    // EWMA vol of log-price ratio
-    const logRet = Math.log((p1/p2) / (hourly[idx-1].c1/hourly[idx-1].c2));
-    ewmaVar = updateEWMA(ewmaVar, logRet);
-
+    ewmaVar = updateEWMA(ewmaVar, Math.log((p1/p2) / (prev.c1/prev.c2)));
     hoursSinceCompound++;
 
-    // Current portfolio values
-    const xVal   = xShares * p1;
-    const yVal   = yShares * p2;
-    const pvNow  = xVal + yVal + cashProfit;
+    const xVal  = xShares * p1;
+    const yVal  = yShares * p2;
+    const hvNow = xHold   * p1 + yHold * p2;
+    const ilPctNow = hvNow > 0 ? ((xVal + yVal) / hvNow - 1) * 100 : 0;
 
-    const xHoldVal = xHold * p1;
-    const yHoldVal = yHold * p2;
-    const hvNow    = xHoldVal + yHoldVal;
-
-    const ilPctNow   = hvNow > 0 ? ((xVal + yVal) / hvNow - 1) * 100 : 0;
-
-    // ── Auto-resume ───────────────────────────────────────────────────────────
+    // IL hard stop / resume
     if (swapsHalted && haltReason === 'IL_STOP' && ilHardResume > 0 && ilPctNow >= -ilHardResume) {
       swapsHalted = false; haltReason = null; ilResumedAt = row.date.toISOString();
     }
-
-    // ── Hard stop ─────────────────────────────────────────────────────────────
     if (!swapsHalted && ilHardStop > 0 && ilPctNow < -ilHardStop) {
       swapsHalted = true; haltReason = 'IL_STOP';
       ilHaltedAt  = row.date.toISOString(); haltCount++;
     }
 
-    // ── Rebalance check ───────────────────────────────────────────────────────
+    // ── Rebalance every hour ──────────────────────────────────────────────────
     //
-    // value ratio = xVal / yVal
-    // neutral = 1.0 (equal value in both assets)
-    // drift   = |valueRatio - 1|
+    // Compute what a perfect 50/50 split looks like at today's prices.
+    // Trade only the difference between current holdings and target.
     //
-    // When drift > bandPct:
-    //   - sell the over-weight asset down to 50%
-    //   - buy the under-weight asset up to 50%
+    // Example:
+    //   Portfolio: 100 RELIANCE @ ₹2500 + 400 KOTAK @ ₹1800
+    //   Total = ₹2,50,000 + ₹7,20,000 = ₹9,70,000
+    //   Target each side = ₹4,85,000
+    //   Target RELIANCE = floor(485000 / 2500) = 194 shares
+    //   Target KOTAK    = floor(485000 / 1800) = 269 shares
+    //   → Buy 94 RELIANCE, sell 131 KOTAK
     //
-    // Both legs happen at current market prices.
-    // Brokerage is charged on both.
-    // Only execute if net > 0 after brokerage AND trade value >= minTradeValue.
+    // The sell leg funds the buy leg. Both at current market price.
 
-    if (!swapsHalted && xVal > 0 && yVal > 0) {
-      const totalPortfolio = xVal + yVal;
-      const targetVal      = totalPortfolio / 2;   // 50/50 target
+    let didTrade = false;
+    if (!swapsHalted) {
+      const totalV  = xVal + yVal;
+      const halfV   = totalV / 2;
+      const xTarget = Math.max(1, Math.floor(halfV / p1));
+      const yTarget = Math.max(1, Math.floor(halfV / p2));
 
-      const xDrift = (xVal - targetVal) / targetVal;  // +ve = Asset1 over-weight
-      const yDrift = (yVal - targetVal) / targetVal;
+      const xDelta = xTarget - xShares;  // +ve = need to buy Asset1
+      const yDelta = yTarget - yShares;  // +ve = need to buy Asset2
 
-      const drift = Math.abs(xDrift);
+      // Exactly one side sells, the other buys.
+      // xDelta and yDelta have opposite signs (when one rises, other falls).
+      if (xDelta > 0 && yDelta < 0) {
+        // Buy Asset1, sell Asset2
+        const buyQty  = xDelta;
+        const sellQty = Math.abs(yDelta);
+        if (buyQty >= 1 && sellQty >= 1 && sellQty < yShares) {
+          const buyValue  = buyQty  * p1;
+          const sellValue = sellQty * p2;
+          const brok = buyBrok * buyValue + sellBrok * sellValue;
+          const gross = sellValue - buyValue;   // real P&L: sold yAsset, bought xAsset
+          const net   = gross - brok;
 
-      if (drift > bandPct) {
-        if (xDrift > 0) {
-          // Asset1 over-weight → sell Asset1, buy Asset2
-          const sellValue = xVal - targetVal;          // ₹ worth to sell
-          const sellQty   = Math.floor(sellValue / p1); // whole shares
-          if (sellQty >= 1) {
-            const actualSellValue = sellQty * p1;
-            const buyQty  = Math.floor(actualSellValue / p2);
-            if (buyQty >= 1) {
-              const actualBuyValue = buyQty * p2;
-              const brok  = sellBrok * actualSellValue + buyBrok * actualBuyValue;
-              // gross = what we got for selling - what we paid for buying
-              // This is real: it's positive only if p1 per unit > p2 per unit × (buyQty/sellQty)
-              const gross = actualSellValue - actualBuyValue;
-              const net   = gross - brok;
+          xShares += buyQty;
+          yShares -= sellQty;
+          cashProfit     += net;
+          totalBrokerage += brok;
+          grossTotal     += gross;
+          netTotal       += net;
+          totalTrades++;
+          if (net >= 0) profitableTrades++; else unprofitableTrades++;
+          didTrade = true;
 
-              if (actualSellValue >= minTradeValue && net > -cashProfit - 1000) {
-                // Execute. Net can be negative — that's a real cost of rebalancing.
-                // We skip only if it would bankrupt the cash account beyond recovery.
-                xShares    -= sellQty;
-                yShares    += buyQty;
-                cashProfit += net;
-                totalBrokerage += brok;
-                grossTotal     += gross;
-                netTotal       += net;
-                totalTrades++;
-                if (net >= 0) profitableTrades++; else unprofitableTrades++;
+          ledger.push({
+            date: row.date.toISOString(), type: 'TRADE',
+            action: 'Buy Asset 1 / Sell Asset 2',
+            buyAsset: 'Asset 1', buyQty,  buyValue,
+            sellAsset:'Asset 2', sellQty, sellValue,
+            gross, brok, net, cashProfit,
+            asset1Price: p1, asset2Price: p2,
+            xShares, yShares,
+            ilPct: +(ilPctNow).toFixed(3),
+            ewmaVolPct: +(Math.sqrt(ewmaVar) * 100).toFixed(3),
+          });
+        }
 
-                ledger.push({
-                  date: row.date.toISOString(), type: 'TRADE',
-                  action: 'Sell Asset 1 / Buy Asset 2',
-                  sellAsset: 'Asset 1', sellQty, sellValue: actualSellValue,
-                  buyAsset:  'Asset 2', buyQty,  buyValue: actualBuyValue,
-                  gross, brok, net, cashProfit,
-                  asset1Price: p1, asset2Price: p2,
-                  xShares, yShares,
-                  xDrift: +(xDrift*100).toFixed(2),
-                  poolIL: +(ilPctNow).toFixed(3),
-                  ewmaVolPct: +(Math.sqrt(ewmaVar)*100).toFixed(3),
-                });
-              } else {
-                skippedTrades++;
-              }
-            }
-          }
+      } else if (xDelta < 0 && yDelta > 0) {
+        // Sell Asset1, buy Asset2
+        const sellQty = Math.abs(xDelta);
+        const buyQty  = yDelta;
+        if (sellQty >= 1 && buyQty >= 1 && sellQty < xShares) {
+          const sellValue = sellQty * p1;
+          const buyValue  = buyQty  * p2;
+          const brok = sellBrok * sellValue + buyBrok * buyValue;
+          const gross = sellValue - buyValue;
+          const net   = gross - brok;
 
-        } else {
-          // Asset2 over-weight → sell Asset2, buy Asset1
-          const sellValue = yVal - targetVal;
-          const sellQty   = Math.floor(sellValue / p2);
-          if (sellQty >= 1) {
-            const actualSellValue = sellQty * p2;
-            const buyQty  = Math.floor(actualSellValue / p1);
-            if (buyQty >= 1) {
-              const actualBuyValue = buyQty * p1;
-              const brok  = sellBrok * actualSellValue + buyBrok * actualBuyValue;
-              const gross = actualSellValue - actualBuyValue;
-              const net   = gross - brok;
+          xShares -= sellQty;
+          yShares += buyQty;
+          cashProfit     += net;
+          totalBrokerage += brok;
+          grossTotal     += gross;
+          netTotal       += net;
+          totalTrades++;
+          if (net >= 0) profitableTrades++; else unprofitableTrades++;
+          didTrade = true;
 
-              if (actualSellValue >= minTradeValue && net > -cashProfit - 1000) {
-                xShares    += buyQty;
-                yShares    -= sellQty;
-                cashProfit += net;
-                totalBrokerage += brok;
-                grossTotal     += gross;
-                netTotal       += net;
-                totalTrades++;
-                if (net >= 0) profitableTrades++; else unprofitableTrades++;
-
-                ledger.push({
-                  date: row.date.toISOString(), type: 'TRADE',
-                  action: 'Sell Asset 2 / Buy Asset 1',
-                  sellAsset: 'Asset 2', sellQty, sellValue: actualSellValue,
-                  buyAsset:  'Asset 1', buyQty,  buyValue: actualBuyValue,
-                  gross, brok, net, cashProfit,
-                  asset1Price: p1, asset2Price: p2,
-                  xShares, yShares,
-                  xDrift: +(xDrift*100).toFixed(2),
-                  poolIL: +(ilPctNow).toFixed(3),
-                  ewmaVolPct: +(Math.sqrt(ewmaVar)*100).toFixed(3),
-                });
-              } else {
-                skippedTrades++;
-              }
-            }
-          }
+          ledger.push({
+            date: row.date.toISOString(), type: 'TRADE',
+            action: 'Sell Asset 1 / Buy Asset 2',
+            sellAsset:'Asset 1', sellQty, sellValue,
+            buyAsset: 'Asset 2', buyQty,  buyValue,
+            gross, brok, net, cashProfit,
+            asset1Price: p1, asset2Price: p2,
+            xShares, yShares,
+            ilPct: +(ilPctNow).toFixed(3),
+            ewmaVolPct: +(Math.sqrt(ewmaVar) * 100).toFixed(3),
+          });
         }
       }
+      // If xDelta=0 and yDelta=0: already at target, no trade needed
     }
 
     // ── Compounding ───────────────────────────────────────────────────────────
-    // Reinvest cash profit back into the portfolio (buy both assets proportionally)
     const compoundThreshold = initCapital * compoundMinPct / 100;
     let didCompound = false;
 
@@ -390,20 +341,18 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
       const grossReinvest = cashProfit * 0.80;
       const brokReinvest  = grossReinvest * reinvestBrok;
       const netReinvest   = grossReinvest - brokReinvest;
-
-      // Buy both assets at 50/50 split
-      const halfReinvest = netReinvest / 2;
-      const buyX = Math.floor(halfReinvest / p1);
-      const buyY = Math.floor(halfReinvest / p2);
+      const halfR         = netReinvest / 2;
+      const buyX          = Math.floor(halfR / p1);
+      const buyY          = Math.floor(halfR / p2);
 
       if (buyX >= 1 && buyY >= 1) {
         const actualCost = buyX * p1 + buyY * p2;
         xShares += buyX;
         yShares += buyY;
-        reinvestedTotal        += actualCost;
-        totalReinvestBrokerage += brokReinvest;
-        totalBrokerage         += brokReinvest;
-        cashProfit             -= grossReinvest;
+        reinvestedTotal += actualCost;
+        totalReinvestBrok += brokReinvest;
+        totalBrokerage    += brokReinvest;
+        cashProfit        -= grossReinvest;
         compoundEvents++;
         didCompound = true;
 
@@ -415,8 +364,7 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
           cashProfitBefore: cashProfit + grossReinvest,
           cashProfitAfter:  cashProfit,
           asset1Price: p1, asset2Price: p2,
-          xShares, yShares,
-          compoundEvent: compoundEvents,
+          xShares, yShares, compoundEvent: compoundEvents,
         });
       }
       hoursSinceCompound = 0;
@@ -426,48 +374,48 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
     const pv = xShares * p1 + yShares * p2;
     const hv = xHold   * p1 + yHold   * p2;
     equityCurve.push({
-      date:          row.date.toISOString(),
-      poolValue:     pv + cashProfit,
-      holdValue:     hv,
+      date: row.date.toISOString(),
+      poolValue:  pv + cashProfit,
+      holdValue:  hv,
       cashProfit,
-      alphaINR:      pv + cashProfit - hv,
-      ilPct:         hv > 0 ? ((pv / hv) - 1) * 100 : 0,
-      halted:        swapsHalted,
+      alphaINR:   pv + cashProfit - hv,
+      ilPct:      hv > 0 ? (pv / hv - 1) * 100 : 0,
+      halted:     swapsHalted,
       haltReason,
       compoundEvent: didCompound,
     });
   }
 
   // ── Final results ─────────────────────────────────────────────────────────────
-  const last      = hourly[hourly.length - 1];
-  const holdValue = xHold   * last.c1 + yHold   * last.c2;
-  const poolAssets= xShares * last.c1 + yShares * last.c2;
-  const totalValue= poolAssets + cashProfit;
-  const ilINR     = poolAssets - holdValue;
-  const ilPct     = holdValue > 0 ? (poolAssets / holdValue - 1) * 100 : 0;
-  const vsHold    = totalValue - holdValue;
-  const vsHoldPct = holdValue  > 0 ? (totalValue / holdValue - 1) * 100 : 0;
+  const last       = hourly[hourly.length - 1];
+  const holdValue  = xHold   * last.c1 + yHold   * last.c2;
+  const poolAssets = xShares * last.c1 + yShares * last.c2;
+  const totalValue = poolAssets + cashProfit;
+  const ilINR      = poolAssets - holdValue;
+  const ilPct      = holdValue > 0 ? (poolAssets / holdValue - 1) * 100 : 0;
+  const vsHold     = totalValue - holdValue;
+  const vsHoldPct  = holdValue  > 0 ? (totalValue / holdValue - 1) * 100 : 0;
 
   const results = {
     realCapital, initCapital, totalValue, poolAssets, holdValue,
     cashProfit, totalBrokerage, grossTotal, netTotal,
     vsHold, vsHoldPct,
-    roiPct:   initCapital > 0 ? (totalValue  / initCapital - 1) * 100 : 0,
-    holdRoi:  initCapital > 0 ? (holdValue   / initCapital - 1) * 100 : 0,
-    cashRoi:  initCapital > 0 ?  cashProfit  / initCapital * 100 : 0,
-    brokRoi:  initCapital > 0 ?  totalBrokerage / initCapital * 100 : 0,
-    ilINR, ilPct,
-    swapsHalted, haltReason, ilHaltedAt, ilResumedAt, haltCount,
-    totalTrades, profitableTrades, unprofitableTrades, skippedTrades,
+    roiPct:  initCapital > 0 ? (totalValue / initCapital - 1) * 100 : 0,
+    holdRoi: initCapital > 0 ? (holdValue  / initCapital - 1) * 100 : 0,
+    cashRoi: initCapital > 0 ? cashProfit  / initCapital * 100 : 0,
+    brokRoi: initCapital > 0 ? totalBrokerage / initCapital * 100 : 0,
+    ilINR, ilPct, swapsHalted, haltReason, ilHaltedAt, ilResumedAt, haltCount,
+    totalTrades, profitableTrades, unprofitableTrades,
     successRate: totalTrades > 0 ? profitableTrades / totalTrades : 0,
     initialX: xShares0, initialY: yShares0, finalX: xShares, finalY: yShares,
-    reinvestedTotal, compoundEvents, totalReinvestBrokerage,
-    bandPct: bandPct * 100,
-    buyBrokeragePct: buyBrok * 100, sellBrokeragePct: sellBrok * 100,
+    reinvestedTotal, compoundEvents,
+    totalReinvestBrokerage: totalReinvestBrok,
     reinvestBrokPct: reinvestBrok * 100,
-    minTradeValue,
+    buyBrokeragePct: buyBrok * 100, sellBrokeragePct: sellBrok * 100,
   };
 
-  const performanceSummary = buildPerformanceSummary(ledger, equityCurve, results);
-  return { swaps: ledger, equityCurve, results, performanceSummary };
+  return {
+    swaps: ledger, equityCurve, results,
+    performanceSummary: buildPerformanceSummary(ledger, equityCurve, results),
+  };
 }

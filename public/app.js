@@ -38,11 +38,9 @@ function setStatus(type, msg) {
 
 function getConfig() {
   return {
-    bandPct:               +$('bandPct').value,
     buyBrokeragePct:       +$('buyBrokeragePct').value,
     sellBrokeragePct:      +$('sellBrokeragePct').value,
     reinvestBrokeragePct:  +$('reinvestBrokeragePct').value,
-    minTradeValue:         +$('minTradeValue').value,
     ilHardStopPct:         +$('ilHardStopPct').value,
     ilHardResumePct:       +$('ilHardResumePct').value,
     compoundIntervalHours: +$('compoundIntervalHours').value,
@@ -136,7 +134,6 @@ function renderStats(r, a1, a2) {
     { label: 'Rebalances executed',          value: r.totalTrades,               cls: '' },
     { label: 'Profitable rebalances',        value: `${r.profitableTrades} (${dec(r.successRate*100,0)}%)`, cls: r.successRate >= 0.5 ? 'up' : 'down' },
     { label: 'Unprofitable rebalances',      value: r.unprofitableTrades ?? 0,   cls: (r.unprofitableTrades ?? 0) > 0 ? 'down' : '' },
-    { label: 'Skipped (too small / risky)',  value: r.skippedTrades ?? 0,        cls: '' },
     { label: `${a1} shares`,                value: `${qty(r.initialX)} → ${qty(r.finalX)}`, cls: '' },
     { label: `${a2} shares`,                value: `${qty(r.initialY)} → ${qty(r.finalY)}`, cls: '' },
   ];
