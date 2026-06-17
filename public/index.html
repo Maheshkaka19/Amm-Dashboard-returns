@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Pair Rebalancing Strategy</title>
+  <title>Pool + Vault Strategy</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link rel="stylesheet" href="/styles.css"/>
@@ -12,10 +12,9 @@
 <div class="shell">
 
   <aside class="sidebar">
-
     <div class="brand">
-      <h1>Pair Rebalancing</h1>
-      <p>Holds two NSE stocks at 50/50 value. Rebalances every hour based on current prices. Profit comes from mean-reversion — selling the risen stock and buying the fallen one.</p>
+      <h1>Pool + Vault</h1>
+      <p>V3 swaps within a fixed ±5% band. Every executed swap is guaranteed profitable by a 3× margin over brokerage. Profits buy vault shares — locked, never traded.</p>
     </div>
 
     <div class="section">
@@ -41,7 +40,28 @@
       <div class="field">
         <label>Capital (₹)</label>
         <input id="realCapital" type="number" value="2000000" step="100000" min="10000"/>
-        <span class="hint">Deployed 50/50 between the two stocks.</span>
+        <span class="hint">Deployed 50/50 between the two stocks at start.</span>
+      </div>
+    </div>
+
+    <hr/>
+
+    <div class="section">
+      <div class="section-title">Pool Settings</div>
+      <div class="field">
+        <label>Band width ± (%)</label>
+        <input id="bandPct" type="number" value="5" min="0.5" max="50" step="0.5"/>
+        <span class="hint">Fixed band around the initial price ratio. Swaps happen only inside this range.</span>
+      </div>
+      <div class="field">
+        <label>Concentration factor (×)</label>
+        <input id="concentration" type="number" value="2" min="1.1" max="20" step="0.1"/>
+        <span class="hint">How amplified the pool liquidity is vs full-range. Higher = more swaps per price move, more fees, more IL risk.</span>
+      </div>
+      <div class="field">
+        <label>Profit margin (× brokerage)</label>
+        <input id="profitMargin" type="number" value="3" min="1" max="20" step="0.5"/>
+        <span class="hint">Swap only executes when gross profit ≥ this multiple of brokerage. 3× means you earn at least 3× what you pay in fees.</span>
       </div>
     </div>
 
@@ -60,27 +80,21 @@
         </div>
       </div>
       <div class="field" style="margin-top:4px">
-        <label>Reinvestment brokerage (%)</label>
+        <label>Vault deposit brokerage (%)</label>
         <input id="reinvestBrokeragePct" type="number" value="0.15" min="0" max="5" step="0.01"/>
-        <span class="hint">Charged when buying shares to reinvest profits.</span>
+        <span class="hint">Charged when buying shares to lock in the vault.</span>
       </div>
     </div>
 
     <hr/>
 
     <div class="section">
-      <div class="section-title">Reinvestment</div>
-      <div class="two-col">
-        <div class="field">
-          <label>Every (hours)</label>
-          <input id="compoundIntervalHours" type="number" value="24" min="1" max="168"/>
-        </div>
-        <div class="field">
-          <label>Min trigger (% capital)</label>
-          <input id="compoundMinPct" type="number" value="0.5" min="0.01" max="10" step="0.1"/>
-        </div>
+      <div class="section-title">Vault</div>
+      <div class="field">
+        <label>Check vault every (hours)</label>
+        <input id="compoundIntervalHours" type="number" value="24" min="1" max="168"/>
+        <span class="hint">How often to check if cash profit is enough to buy vault shares.</span>
       </div>
-      <span class="hint">80% of accumulated cash profit is reinvested as additional shares.</span>
     </div>
 
     <hr/>
@@ -101,35 +115,34 @@
     </div>
 
     <button id="runSimulation" class="run-btn">Run Backtest</button>
-
   </aside>
 
   <main class="content">
-
     <div id="statusBar" class="status">Upload two CSV files and click Run Backtest.</div>
+    <div id="fitnessPanel" class="hidden"></div>
 
     <div id="resultsSection" class="hidden">
-
       <div class="sec-head">
-        <h2 id="pairHeading">Reliance ↔ Kotak Bank</h2>
+        <h2 id="pairHeading">Asset 1 ↔ Asset 2</h2>
         <button id="exportBtn" class="export-btn hidden">Export CSV</button>
       </div>
 
       <div class="hero-row" id="heroRow"></div>
       <div class="stat-grid" id="statGrid" style="margin-top:16px"></div>
-
       <div id="perfPanel" style="margin-top:20px"></div>
+
+      <!-- Pool vs Vault breakdown -->
+      <div class="vault-breakdown" id="vaultBreakdown" style="margin-top:20px"></div>
 
       <div class="chart-block" style="margin-top:20px">
         <div class="legend" id="legend1"></div>
         <div class="chart-wrap"><canvas id="chart1"></canvas></div>
-        <div class="chart-label">Yellow ticks = rebalance · Green dashed = reinvestment · Red tint = halted</div>
+        <div class="chart-label">Yellow = swap · Green dashed = vault deposit · Grey = out of band</div>
       </div>
-
       <div class="chart-block">
         <div class="legend" id="legend2"></div>
         <div class="chart-wrap"><canvas id="chart2"></canvas></div>
-        <div class="chart-label">Net profit vs hold (₹) · IL % scaled ×100</div>
+        <div class="chart-label">Alpha (strategy − hold) · IL%×100 · Vault value</div>
       </div>
 
       <div>
@@ -140,11 +153,9 @@
         <div id="ledgerNote" class="tbl-note hidden"></div>
         <div id="ledgerWrap"><div class="empty">No activity yet.</div></div>
       </div>
-
     </div>
 
     <div id="emptyState" class="empty">Upload two 1-minute NSE CSV files and click Run Backtest.</div>
-
   </main>
 </div>
 <script type="module" src="/app.js"></script>

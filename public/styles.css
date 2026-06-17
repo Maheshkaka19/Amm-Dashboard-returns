@@ -330,3 +330,56 @@ td.down             { color: var(--red); }
 .leg-dot  { width:10px; height:10px; border-radius:2px; flex-shrink:0; }
 .swap-dot { background:rgba(251,191,36,0.55); }
 .comp-dot { background:rgba(45,212,191,0.65); }
+
+/* ── Pair fitness ── */
+#fitnessPanel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.fitness-bar { padding: 14px 16px; }
+.fitness-verdict {
+  font-size: 13px; font-weight: 600; margin-bottom: 10px;
+}
+.fitness-stats {
+  display: flex; flex-wrap: wrap; gap: 12px 20px;
+  font-family: 'JetBrains Mono', monospace; font-size: 12px;
+  color: var(--muted); margin-bottom: 10px;
+}
+.fitness-stats strong { color: var(--text); }
+.fitness-explain {
+  font-size: 11px; color: var(--muted);
+  line-height: 1.6; font-family: 'JetBrains Mono', monospace;
+  border-top: 1px solid var(--line); padding-top: 10px; margin-top: 4px;
+}
+
+/* ── Vault breakdown panel ── */
+.vault-panel { border:1px solid var(--line); border-radius:8px; background:var(--surface); padding:14px 16px; }
+.vp-title { font-size:12px; font-weight:600; margin-bottom:12px; color:var(--text); }
+.vp-row { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:1px; background:var(--line); border-radius:6px; overflow:hidden; }
+.vp-cell { background:var(--bg); padding:10px 12px; }
+.vp-label { font-size:11px; color:var(--muted); margin-bottom:3px; }
+.vp-value { font-size:13px; font-weight:600; font-family:'JetBrains Mono',monospace; color:var(--text); }
+.vp-value.teal { color:var(--teal); }
+.vp-value.up   { color:var(--green); }
+.vp-value.down { color:var(--red); }
+
+/* ── Ledger row types ── */
+.row-vault td  { background:rgba(45,212,191,0.04) !important; }
+.row-vault:hover td { background:rgba(45,212,191,0.08) !important; }
+.row-adjust td { background:rgba(251,191,36,0.04) !important; }
+.row-adjust:hover td { background:rgba(251,191,36,0.07) !important; }
+
+.tag-vault {
+  display:inline-block; font-size:10px; font-weight:600; padding:1px 6px;
+  border-radius:3px; background:rgba(45,212,191,0.12); color:var(--teal);
+  border:1px solid rgba(45,212,191,0.25); font-family:'Inter',sans-serif;
+}
+.tag-adjust {
+  display:inline-block; font-size:10px; font-weight:600; padding:1px 6px;
+  border-radius:3px; background:rgba(251,191,36,0.10); color:var(--gold);
+  border:1px solid rgba(251,191,36,0.22); font-family:'Inter',sans-serif;
+}
+.adj-dot { background:rgba(251,191,36,0.60); }
+td.teal { color:var(--teal); font-weight:600; }
