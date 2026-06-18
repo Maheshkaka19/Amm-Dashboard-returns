@@ -268,6 +268,7 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   let hoursSinceVault  = 0;
   let rPrev            = rInit;
   let swapsHalted      = false;
+  let outOfBandLock     = false;  // prevents repeated adjustments while out of band
   let haltReason       = null;
   let ilHaltedAt = null, ilResumedAt = null, haltCount = 0;
 
@@ -307,76 +308,69 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
 
     // ── BAND CHECK ────────────────────────────────────────────────────────────
     //
-    // Is the current ratio inside [rLow, rHigh]?
-    // If not, attempt to restore pool ratio via vault/pool adjustment.
-    //
-    // After adjustment: L is recomputed from new pool capital.
+    // FIX: adjustment must fire ONLY ONCE per breach — on the hour price
+    // first crosses outside the band. While price remains outside, the pool
+    // sits passively (already adjusted, no further moves, no swaps). When
+    // price re-enters the band, the lock clears and swapping resumes.
 
     const inBand = rNow >= rLow && rNow <= rHigh;
 
-    if (!inBand && !swapsHalted) {
-      // How many of each asset does the pool need to be back at 50/50
-      // within the band boundary price?
-      //
-      // Clamp rNow to band edge to find target pool composition:
-      const rClamped  = clamp(rNow, rLow, rHigh);
-      const newPoolCap = poolVal;  // preserve pool ₹ value
-      // Target shares at clamped ratio to bring pool back in range:
-      // At clamped ratio, 50/50 by value:
-      //   xNew = floor(newPoolCap/2 / p1)
-      //   yNew = floor(newPoolCap/2 / p2)
-      const xTarget = Math.max(1, Math.floor(newPoolCap / 2 / p1));
-      const yTarget = Math.max(1, Math.floor(newPoolCap / 2 / p2));
+    if (!inBand && !swapsHalted && !outOfBandLock) {
+      outOfBandLock = true;
+
+      // Target pool composition at 50/50 value using CURRENT pool value
+      // and CURRENT prices — this is what the pool should hold to be centred.
+      const xTarget = Math.max(1, Math.floor(poolVal / 2 / p1));
+      const yTarget = Math.max(1, Math.floor(poolVal / 2 / p2));
 
       const xNeed = xTarget - poolX;  // +ve = pool needs more Asset1
       const yNeed = yTarget - poolY;  // +ve = pool needs more Asset2
 
       let adjType = null;
 
-      // Step 1: Can vault supply what pool needs?
       if (xNeed > 0 && yNeed < 0) {
-        // Pool needs more Asset1, less Asset2 — try moving from vault
-        const xFromVault = Math.min(xNeed, vaultX);
-        const yToVault   = Math.abs(yNeed);
-        if (xFromVault >= 1) {
-          poolX  += xFromVault;
-          poolY  -= Math.min(yToVault, poolY - 1);
-          vaultX -= xFromVault;
-          vaultY += Math.min(yToVault, poolY);
+        // Pool needs more Asset1, has excess Asset2 to give up.
+        const yExcess = Math.abs(yNeed);
+        if (vaultX >= xNeed) {
+          // Vault fully covers the Asset1 shortfall.
+          vaultX -= xNeed;
+          poolX  += xNeed;
+          poolY  -= yExcess;
+          vaultY += yExcess;
           adjType = 'VAULT→POOL';
           vaultAdjustments++;
         } else {
-          // Vault can't help — shrink pool to fit in band
-          poolX = Math.max(1, xTarget);
-          poolY = Math.max(1, yTarget);
-          // Excess shares go to vault
-          vaultX += Math.max(0, poolX - xTarget);
-          vaultY += Math.max(0, poolY - yTarget);
+          // Vault insufficient — take whatever it has, surplus Asset2 goes to vault.
+          const xFromVault = vaultX;
+          vaultX = 0;
+          poolX += xFromVault;
+          poolY -= yExcess;
+          vaultY += yExcess;
           adjType = 'POOL→VAULT';
           poolAdjustments++;
         }
       } else if (xNeed < 0 && yNeed > 0) {
-        // Pool needs less Asset1, more Asset2 — try moving from vault
-        const yFromVault = Math.min(yNeed, vaultY);
-        const xToVault   = Math.abs(xNeed);
-        if (yFromVault >= 1) {
-          poolY  += yFromVault;
-          poolX  -= Math.min(xToVault, poolX - 1);
-          vaultY -= yFromVault;
-          vaultX += Math.min(xToVault, poolX);
+        // Pool needs more Asset2, has excess Asset1 to give up.
+        const xExcess = Math.abs(xNeed);
+        if (vaultY >= yNeed) {
+          vaultY -= yNeed;
+          poolY  += yNeed;
+          poolX  -= xExcess;
+          vaultX += xExcess;
           adjType = 'VAULT→POOL';
           vaultAdjustments++;
         } else {
-          poolX = Math.max(1, xTarget);
-          poolY = Math.max(1, yTarget);
-          vaultX += Math.max(0, poolX - xTarget);
-          vaultY += Math.max(0, poolY - yTarget);
+          const yFromVault = vaultY;
+          vaultY = 0;
+          poolY += yFromVault;
+          poolX -= xExcess;
+          vaultX += xExcess;
           adjType = 'POOL→VAULT';
           poolAdjustments++;
         }
       }
 
-      // Recompute L from adjusted pool
+      // Recompute L from adjusted pool composition.
       const newCap = poolX * p1 + poolY * p2;
       L = computeL(newCap, p1, p2, rInit, rLow, rHigh);
       rPrev = clamp(rNow, rLow, rHigh);
@@ -394,7 +388,13 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
         });
       }
 
-    } else if (inBand && !swapsHalted) {
+    } else if (inBand) {
+      // Back inside the band — release the lock so the next breach can
+      // trigger a fresh, single adjustment.
+      outOfBandLock = false;
+    }
+
+    if (inBand && !swapsHalted) {
       // ── IN-BAND: V3 SWAP ──────────────────────────────────────────────────
       //
       // Compute V3 delta from rPrev → rNow.
