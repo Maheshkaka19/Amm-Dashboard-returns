@@ -230,12 +230,9 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   const p1_0  = h0.c1, p2_0 = h0.c2;
   const rInit = p1_0 / p2_0;   // fixed band center — NEVER changes
 
-  // Band boundaries derived from concentration factor C:
-  // rLow = rInit*(1 - 1/C), rHigh = rInit*(1 + 1/C)
-  // But clamped so band half-width = bandPct (whichever is tighter)
-  const halfWidth = Math.min(bandPct, 1/concentration);
-  const rLow  = rInit * (1 - halfWidth);
-  const rHigh = rInit * (1 + halfWidth);
+  // Band width is controlled ONLY by bandPct — fixed ±X% around rInit, forever.
+  const rLow  = rInit * (1 - bandPct);
+  const rHigh = rInit * (1 + bandPct);
 
   // Deploy capital 50/50 to pool
   const poolHalf  = realCapital / 2;
@@ -251,8 +248,19 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   let vaultX = 0;
   let vaultY = 0;
 
-  // Compute initial L from pool capital
-  let L = computeL(initCapital, p1_0, p2_0, rInit, rLow, rHigh);
+  // ── Concentration scales swap intensity (L), independent of band width ──────
+  //
+  // In real V3, L for a given capital and a FIXED range is fixed — there is
+  // no separate "concentration knob" once rLow/rHigh are set; concentration
+  // is just 1/(1-√(rLow/rHigh)), entirely a function of band width.
+  //
+  // Here we expose concentration as a SEPARATE user-facing amplifier on top
+  // of the natural V3 math: it directly multiplies L, so a wider value
+  // produces proportionally larger swap quantities per price tick without
+  // changing the band boundaries at all. This is what "concentration" means
+  // to the user — more aggressive trading inside the same fixed range.
+  const baseL = computeL(initCapital, p1_0, p2_0, rInit, rLow, rHigh);
+  let L = baseL * concentration;
 
   // ── State ──────────────────────────────────────────────────────────────────
   let cashProfit       = 0;
@@ -370,9 +378,10 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
         }
       }
 
-      // Recompute L from adjusted pool composition.
+      // Recompute L from adjusted pool composition, preserving the
+      // concentration amplifier so swap intensity stays consistent.
       const newCap = poolX * p1 + poolY * p2;
-      L = computeL(newCap, p1, p2, rInit, rLow, rHigh);
+      L = computeL(newCap, p1, p2, rInit, rLow, rHigh) * concentration;
       rPrev = clamp(rNow, rLow, rHigh);
 
       if (adjType) {
@@ -406,8 +415,19 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
       if (dx < 0 && dy > 0) {
         // Ratio rose: pool gives out Asset1, takes in Asset2
         // → sell Asset1, buy Asset2
-        const sellQty = Math.min(Math.floor(Math.abs(dx)), poolX - 1);
-        const buyQty  = Math.floor(Math.abs(dy));
+        //
+        // FIX: if the pool can't afford the full V3 delta, scale BOTH legs
+        // down proportionally (keeping the dy/dx ratio intact) instead of
+        // capping only the sell leg. Capping one leg without the other
+        // breaks the trade's value balance and makes gross deeply negative.
+        const rawSellQty = Math.floor(Math.abs(dx));
+        const rawBuyQty  = Math.floor(Math.abs(dy));
+        const affordable = poolX - 1;
+        const scale      = rawSellQty > affordable && rawSellQty > 0
+                          ? affordable / rawSellQty
+                          : 1;
+        const sellQty = Math.min(rawSellQty, affordable);
+        const buyQty  = Math.floor(rawBuyQty * scale);
 
         if (sellQty >= 1 && buyQty >= 1) {
           const sellVal = sellQty * p1;
@@ -443,8 +463,16 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
       } else if (dx > 0 && dy < 0) {
         // Ratio fell: pool gives out Asset2, takes in Asset1
         // → sell Asset2, buy Asset1
-        const sellQty = Math.min(Math.floor(Math.abs(dy)), poolY - 1);
-        const buyQty  = Math.floor(Math.abs(dx));
+        //
+        // FIX: same proportional-scaling logic as the other direction.
+        const rawSellQty = Math.floor(Math.abs(dy));
+        const rawBuyQty  = Math.floor(Math.abs(dx));
+        const affordable = poolY - 1;
+        const scale      = rawSellQty > affordable && rawSellQty > 0
+                          ? affordable / rawSellQty
+                          : 1;
+        const sellQty = Math.min(rawSellQty, affordable);
+        const buyQty  = Math.floor(rawBuyQty * scale);
 
         if (sellQty >= 1 && buyQty >= 1) {
           const sellVal = sellQty * p2;
