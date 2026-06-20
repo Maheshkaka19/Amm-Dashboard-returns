@@ -70,7 +70,6 @@ function getConfig() {
   return {
     bandPct:               +$('bandPct').value,
     concentration:         +$('concentration').value,
-    profitMargin:          +$('profitMargin').value,
     buyBrokeragePct:       +$('buyBrokeragePct').value,
     sellBrokeragePct:      +$('sellBrokeragePct').value,
     reinvestBrokeragePct:  +$('reinvestBrokeragePct').value,

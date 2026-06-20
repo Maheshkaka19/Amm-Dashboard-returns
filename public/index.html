@@ -14,7 +14,7 @@
   <aside class="sidebar">
     <div class="brand">
       <h1>Pool + Vault</h1>
-      <p>V3 swaps within a fixed ±5% band. Every executed swap is guaranteed profitable by a 3× margin over brokerage. Profits buy vault shares — locked, never traded.</p>
+      <p>V3 swaps every minute the price is within a fixed ±5% band — no hourly averaging. Every executed swap clears its own brokerage cost. Profits buy vault shares — locked, never traded.</p>
     </div>
 
     <div class="section">
@@ -58,11 +58,7 @@
         <input id="concentration" type="number" value="2" min="1.1" max="20" step="0.1"/>
         <span class="hint">How amplified the pool liquidity is vs full-range. Higher = more swaps per price move, more fees, more IL risk.</span>
       </div>
-      <div class="field">
-        <label>Profit margin (× brokerage)</label>
-        <input id="profitMargin" type="number" value="3" min="1" max="20" step="0.5"/>
-        <span class="hint">Swap only executes when gross profit ≥ this multiple of brokerage. 3× means you earn at least 3× what you pay in fees.</span>
-      </div>
+      <div class="hint" style="margin-top:6px">Every swap that clears its own brokerage cost (net &gt; 0) executes — no extra margin filter.</div>
     </div>
 
     <hr/>

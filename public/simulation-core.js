@@ -6,7 +6,7 @@
 //  POOL — active trading position. Holds two stocks at ~50/50 value.
 //    Swaps happen every hour the price ratio is inside the fixed band.
 //    Swap sizing uses V3 concentrated liquidity delta math.
-//    A swap only executes when gross profit ≥ profitMargin × brokerage.
+//    A swap executes whenever net profit (gross − brokerage) > 0.
 //
 //  VAULT — profit extraction. Funded entirely from accumulated cash.
 //    When cashProfit can buy ≥1 share of each stock (50/50 split at
@@ -35,14 +35,15 @@
 //    dx = L × (1/√rNew − 1/√rOld)   [Asset1 change]
 //    dy = L × (√rNew − √rOld)        [Asset2 change]
 //
-//  Swap quantities: floor(|dx|) and floor(|dy|).
-//  Execute only when gross ≥ profitMargin × brokerage.
+//  Swap quantities: floor(|dx|) and floor(|dy|), with buy leg hard-capped
+//  to what sell proceeds can fund (self-funding guarantee — see swap code).
 //
-//  PROFIT MARGIN GUARD
-//  ────────────────────
-//  gross   = sellQty×pSell − buyQty×pBuy
-//  brok    = sellBrok×sellValue + buyBrok×buyValue
-//  Execute only when gross ≥ profitMargin × brok   (default 3×)
+//  EXECUTION RULE
+//  ────────────────
+//  gross = sellQty×pSell − buyQty×pBuy   (always ≥ 0 by construction)
+//  brok  = sellBrok×sellValue + buyBrok×buyValue
+//  net   = gross − brok
+//  Execute whenever net > 0 — any trade that clears its own cost.
 //
 // ─────────────────────────────────────────────────────────────────
 
@@ -76,22 +77,33 @@ export function normalizeRows(rows) {
     .sort((a, b) => a.date - b.date);
 }
 
-export function buildHourly(a1, a2) {
+// ─── BUG FIX: minute-level merge, NO resolution collapsing ────────────────────
+//
+// The old buildHourly() rounded every timestamp down to its containing hour
+// and kept only the LAST price seen in that hour — discarding ~59 out of 60
+// one-minute bars. On a full year of 1-min data that throws away over 98%
+// of actual price action, which is why swap counts looked artificially low:
+// the strategy was blind to almost everything the market did.
+//
+// buildMinutely() merges on EXACT matching timestamps from both files,
+// minute by minute. Every bar where both assets have a quote becomes one
+// simulation step. No price action is discarded.
+
+export function buildMinutely(a1, a2) {
   const map = new Map();
   let i = 0, j = 0;
   while (i < a1.length && j < a2.length) {
     const t1 = a1[i].date.getTime(), t2 = a2[j].date.getTime();
     if (t1 === t2) {
-      const key = (() => {
-        const d = new Date(a1[i].date); d.setMinutes(0, 0, 0); return d.toISOString();
-      })();
-      if (!map.has(key)) map.set(key, { date: new Date(key), c1: a1[i].close, c2: a2[j].close });
-      const b = map.get(key); b.c1 = a1[i].close; b.c2 = a2[j].close;
+      map.set(t1, { date: a1[i].date, c1: a1[i].close, c2: a2[j].close });
       i++; j++;
     } else if (t1 < t2) i++; else j++;
   }
   return [...map.values()].sort((a, b) => a.date - b.date);
 }
+
+// Kept for backward compatibility with any external callers — now an alias.
+export function buildHourly(a1, a2) { return buildMinutely(a1, a2); }
 
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 
@@ -210,8 +222,8 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   if (!a1.length || !a2.length)
     return { error: 'Both files need valid date, close, volume columns.' };
 
-  const hourly = buildHourly(a1, a2);
-  if (hourly.length < 10)
+  const bars = buildMinutely(a1, a2);
+  if (bars.length < 10)
     return { error: 'Too few overlapping bars. Check timestamps match.' };
 
   // ── Config ─────────────────────────────────────────────────────────────────
@@ -220,13 +232,20 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   const buyBrok       = clamp(+(config.buyBrokeragePct  ?? 0.15), 0, 5)   / 100;
   const sellBrok      = clamp(+(config.sellBrokeragePct ?? 0.15), 0, 5)   / 100;
   const reinvestBrok  = clamp(+(config.reinvestBrokeragePct ?? 0.15), 0, 5) / 100;
-  const profitMargin  = clamp(+(config.profitMargin    ?? 3),    1, 20);            // gross ≥ N×brok
+  // NOTE: profit margin guard removed. Every swap is already self-funding
+  // by construction (buyQty is hard-capped to sellValue/buyPrice — see swap
+  // blocks below), so gross is always ≥ 0. Brokerage is charged only on the
+  // ₹ amount actually swapped. The only correct institutional-grade gate is
+  // net = gross − brokerage > 0 — execute any trade that clears its own
+  // costs, however small. An arbitrary multiple (e.g. "3× brokerage") has
+  // no economic basis and was suppressing the vast majority of real,
+  // profitable opportunities.
   const compoundIntervalHours = clamp(+(config.compoundIntervalHours ?? 24), 1, 168);
   const ilHardStop    = clamp(+(config.ilHardStopPct   ?? 0), 0, 100);
   const ilHardResume  = clamp(+(config.ilHardResumePct ?? 0), 0, 100);
 
   // ── Initialise pool ────────────────────────────────────────────────────────
-  const h0    = hourly[0];
+  const h0    = bars[0];
   const p1_0  = h0.c1, p2_0 = h0.c2;
   const rInit = p1_0 / p2_0;   // fixed band center — NEVER changes
 
@@ -269,11 +288,11 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   let netSwapTotal     = 0;
   let totalSwaps       = 0;
   let profitableSwaps  = 0;
-  let skippedSwaps     = 0;   // swap wanted but gross < profitMargin*brok
+  let skippedSwaps     = 0;   // swap wanted but net ≤ 0 (brokerage exceeded gross)
   let vaultDeposits    = 0;
   let vaultAdjustments = 0;   // times vault shares moved to/from pool
   let poolAdjustments  = 0;   // times pool shrunk to restore range
-  let hoursSinceVault  = 0;
+  let lastVaultCheckMs = bars[0].date.getTime();  // real elapsed time, not bar count
   let rPrev            = rInit;
   let swapsHalted      = false;
   let outOfBandLock     = false;  // prevents repeated adjustments while out of band
@@ -292,12 +311,10 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   });
 
   // ── Hour loop ──────────────────────────────────────────────────────────────
-  for (let idx = 1; idx < hourly.length; idx++) {
-    const row = hourly[idx];
+  for (let idx = 1; idx < bars.length; idx++) {
+    const row = bars[idx];
     const p1  = row.c1, p2 = row.c2;
     const rNow = p1 / p2;
-
-    hoursSinceVault++;
 
     const poolVal  = poolX * p1 + poolY * p2;
     const vaultVal = vaultX * p1 + vaultY * p2;
@@ -408,7 +425,7 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
       //
       // Compute V3 delta from rPrev → rNow.
       // Round both legs with Math.floor (never trade more than delta says).
-      // Only execute when gross ≥ profitMargin × brokerage.
+      // Execute whenever net (gross − brokerage) > 0.
 
       const { dx, dy } = v3Delta(L, rPrev, rNow, rLow, rHigh);
 
@@ -442,9 +459,9 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
             const buyVal  = buyQty  * p2;
             const brok    = sellBrok * sellVal + buyBrok * buyVal;
             const gross   = sellVal - buyVal;
+            const net     = gross - brok;
 
-            if (gross >= profitMargin * brok) {
-              const net = gross - brok;
+            if (net > 0) {
               poolX -= sellQty; poolY += buyQty;
               cashProfit     += net;
               totalBrokerage += brok;
@@ -488,9 +505,9 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
             const buyVal  = buyQty  * p1;
             const brok    = sellBrok * sellVal + buyBrok * buyVal;
             const gross   = sellVal - buyVal;
+            const net     = gross - brok;
 
-            if (gross >= profitMargin * brok) {
-              const net = gross - brok;
+            if (net > 0) {
               poolY -= sellQty; poolX += buyQty;
               cashProfit     += net;
               totalBrokerage += brok;
@@ -527,6 +544,7 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
     // Brokerage is charged on the buy.
 
     let didVault = false;
+    const hoursSinceVault = (row.date.getTime() - lastVaultCheckMs) / 3600000;
     if (hoursSinceVault >= compoundIntervalHours && cashProfit > 0) {
       const gross   = cashProfit;
       const brokCost = gross * reinvestBrok;
@@ -555,7 +573,7 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
           depositEvent: vaultDeposits,
         });
       }
-      hoursSinceVault = 0;
+      lastVaultCheckMs = row.date.getTime();
     }
 
     // ── Equity snapshot ───────────────────────────────────────────────────────
@@ -580,7 +598,7 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   }
 
   // ── Final results ──────────────────────────────────────────────────────────
-  const last      = hourly[hourly.length - 1];
+  const last      = bars[bars.length - 1];
   const holdValue = holdX  * last.c1 + holdY  * last.c2;
   const poolFinal = poolX  * last.c1 + poolY  * last.c2;
   const vaultFinal= vaultX * last.c1 + vaultY * last.c2;
@@ -609,7 +627,6 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
     bandPct: bandPct * 100, concentration,
     rInit: +rInit.toFixed(6), rLow: +rLow.toFixed(6), rHigh: +rHigh.toFixed(6), L: +L.toFixed(2),
     buyBrokeragePct: buyBrok*100, sellBrokeragePct: sellBrok*100,
-    profitMargin,
   };
 
   return {
