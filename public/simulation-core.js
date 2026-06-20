@@ -416,47 +416,56 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
         // Ratio rose: pool gives out Asset1, takes in Asset2
         // → sell Asset1, buy Asset2
         //
-        // FIX: if the pool can't afford the full V3 delta, scale BOTH legs
-        // down proportionally (keeping the dy/dx ratio intact) instead of
-        // capping only the sell leg. Capping one leg without the other
-        // breaks the trade's value balance and makes gross deeply negative.
-        const rawSellQty = Math.floor(Math.abs(dx));
-        const rawBuyQty  = Math.floor(Math.abs(dy));
-        const affordable = poolX - 1;
-        const scale      = rawSellQty > affordable && rawSellQty > 0
-                          ? affordable / rawSellQty
-                          : 1;
-        const sellQty = Math.min(rawSellQty, affordable);
-        const buyQty  = Math.floor(rawBuyQty * scale);
+        // CORRECT CONSTANT-PRODUCT SWAP SIZING
+        // ───────────────────────────────────────
+        // The V3 curve defines the SHAPE of the trade (dx/dy ratio), but the
+        // SELL leg is the source of truth for value — you can only spend
+        // what you actually receive from selling. Flooring dx and dy
+        // independently lets the buy leg round up while the sell leg rounds
+        // down (or vice versa), silently creating value from nothing.
+        //
+        // Fix: sell quantity = floor(V3 delta), capped to pool balance.
+        // Buy quantity = floor(V3 delta), then HARD-CAPPED so its value
+        // never exceeds sell proceeds. This guarantees the trade is always
+        // self-funding at the raw-quantity level, before brokerage and
+        // before the profit-margin gate even runs.
+        const sellQty = Math.min(Math.floor(Math.abs(dx)), poolX - 1);
+        const rawBuyQty = Math.floor(Math.abs(dy));
 
-        if (sellQty >= 1 && buyQty >= 1) {
+        if (sellQty >= 1 && rawBuyQty >= 1) {
           const sellVal = sellQty * p1;
-          const buyVal  = buyQty  * p2;
-          const brok    = sellBrok * sellVal + buyBrok * buyVal;
-          const gross   = sellVal - buyVal;
+          // Cap buy quantity so buyVal can never exceed sellVal.
+          const maxAffordableBuyQty = Math.floor(sellVal / p2);
+          const buyQty = Math.min(rawBuyQty, maxAffordableBuyQty);
 
-          if (gross >= profitMargin * brok) {
-            const net = gross - brok;
-            poolX -= sellQty; poolY += buyQty;
-            cashProfit     += net;
-            totalBrokerage += brok;
-            grossSwapTotal += gross;
-            netSwapTotal   += net;
-            totalSwaps++; profitableSwaps++;
+          if (buyQty >= 1) {
+            const buyVal  = buyQty  * p2;
+            const brok    = sellBrok * sellVal + buyBrok * buyVal;
+            const gross   = sellVal - buyVal;
 
-            ledger.push({
-              date: row.date.toISOString(), type: 'SWAP',
-              action: 'Sell A1 / Buy A2',
-              sellAsset: 'Asset 1', sellQty, sellVal,
-              buyAsset:  'Asset 2', buyQty,  buyVal,
-              gross, brok, net, cashProfit,
-              asset1Price: p1, asset2Price: p2,
-              poolX, poolY, vaultX, vaultY,
-              ilPct: +ilPct.toFixed(3), L: +L.toFixed(2),
-              rNow: +rNow.toFixed(6), dx, dy,
-            });
-          } else {
-            skippedSwaps++;
+            if (gross >= profitMargin * brok) {
+              const net = gross - brok;
+              poolX -= sellQty; poolY += buyQty;
+              cashProfit     += net;
+              totalBrokerage += brok;
+              grossSwapTotal += gross;
+              netSwapTotal   += net;
+              totalSwaps++; profitableSwaps++;
+
+              ledger.push({
+                date: row.date.toISOString(), type: 'SWAP',
+                action: 'Sell A1 / Buy A2',
+                sellAsset: 'Asset 1', sellQty, sellVal,
+                buyAsset:  'Asset 2', buyQty,  buyVal,
+                gross, brok, net, cashProfit,
+                asset1Price: p1, asset2Price: p2,
+                poolX, poolY, vaultX, vaultY,
+                ilPct: +ilPct.toFixed(3), L: +L.toFixed(2),
+                rNow: +rNow.toFixed(6), dx, dy,
+              });
+            } else {
+              skippedSwaps++;
+            }
           }
         }
 
@@ -464,44 +473,45 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
         // Ratio fell: pool gives out Asset2, takes in Asset1
         // → sell Asset2, buy Asset1
         //
-        // FIX: same proportional-scaling logic as the other direction.
-        const rawSellQty = Math.floor(Math.abs(dy));
-        const rawBuyQty  = Math.floor(Math.abs(dx));
-        const affordable = poolY - 1;
-        const scale      = rawSellQty > affordable && rawSellQty > 0
-                          ? affordable / rawSellQty
-                          : 1;
-        const sellQty = Math.min(rawSellQty, affordable);
-        const buyQty  = Math.floor(rawBuyQty * scale);
+        // Same self-funding fix as the other direction: sell leg is the
+        // source of truth, buy leg is hard-capped to what sell proceeds
+        // can actually fund at current market price.
+        const sellQty   = Math.min(Math.floor(Math.abs(dy)), poolY - 1);
+        const rawBuyQty = Math.floor(Math.abs(dx));
 
-        if (sellQty >= 1 && buyQty >= 1) {
+        if (sellQty >= 1 && rawBuyQty >= 1) {
           const sellVal = sellQty * p2;
-          const buyVal  = buyQty  * p1;
-          const brok    = sellBrok * sellVal + buyBrok * buyVal;
-          const gross   = sellVal - buyVal;
+          const maxAffordableBuyQty = Math.floor(sellVal / p1);
+          const buyQty = Math.min(rawBuyQty, maxAffordableBuyQty);
 
-          if (gross >= profitMargin * brok) {
-            const net = gross - brok;
-            poolY -= sellQty; poolX += buyQty;
-            cashProfit     += net;
-            totalBrokerage += brok;
-            grossSwapTotal += gross;
-            netSwapTotal   += net;
-            totalSwaps++; profitableSwaps++;
+          if (buyQty >= 1) {
+            const buyVal  = buyQty  * p1;
+            const brok    = sellBrok * sellVal + buyBrok * buyVal;
+            const gross   = sellVal - buyVal;
 
-            ledger.push({
-              date: row.date.toISOString(), type: 'SWAP',
-              action: 'Sell A2 / Buy A1',
-              sellAsset: 'Asset 2', sellQty, sellVal,
-              buyAsset:  'Asset 1', buyQty,  buyVal,
-              gross, brok, net, cashProfit,
-              asset1Price: p1, asset2Price: p2,
-              poolX, poolY, vaultX, vaultY,
-              ilPct: +ilPct.toFixed(3), L: +L.toFixed(2),
-              rNow: +rNow.toFixed(6), dx, dy,
-            });
-          } else {
-            skippedSwaps++;
+            if (gross >= profitMargin * brok) {
+              const net = gross - brok;
+              poolY -= sellQty; poolX += buyQty;
+              cashProfit     += net;
+              totalBrokerage += brok;
+              grossSwapTotal += gross;
+              netSwapTotal   += net;
+              totalSwaps++; profitableSwaps++;
+
+              ledger.push({
+                date: row.date.toISOString(), type: 'SWAP',
+                action: 'Sell A2 / Buy A1',
+                sellAsset: 'Asset 2', sellQty, sellVal,
+                buyAsset:  'Asset 1', buyQty,  buyVal,
+                gross, brok, net, cashProfit,
+                asset1Price: p1, asset2Price: p2,
+                poolX, poolY, vaultX, vaultY,
+                ilPct: +ilPct.toFixed(3), L: +L.toFixed(2),
+                rNow: +rNow.toFixed(6), dx, dy,
+              });
+            } else {
+              skippedSwaps++;
+            }
           }
         }
       }
