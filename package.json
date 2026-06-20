@@ -1,6 +1,6 @@
 {
-  "name": "amm-calculus-engine",
-  "version": "4.0.0",
+  "name": "institutional-pair-rebalancer",
+  "version": "7.0.0",
   "private": true,
   "type": "module",
   "engines": { "node": ">=20" },

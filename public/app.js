@@ -13,21 +13,19 @@ const fdt = s  => {
          d.toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', hour12:false });
 };
 
-// File upload + auto fitness
 $('asset1File').addEventListener('change', e => {
   $('asset1FileName').textContent = e.target.files[0]?.name || ''; maybeRunFitness();
 });
 $('asset2File').addEventListener('change', e => {
   $('asset2FileName').textContent = e.target.files[0]?.name || ''; maybeRunFitness();
 });
-$('asset1Label').addEventListener('input', () => {
-  $('pairHeading').textContent = `${$('asset1Label').value||'Asset 1'} ↔ ${$('asset2Label').value||'Asset 2'}`;
-});
-$('asset2Label').addEventListener('input', () => {
-  $('pairHeading').textContent = `${$('asset1Label').value||'Asset 1'} ↔ ${$('asset2Label').value||'Asset 2'}`;
-});
+$('asset1Label').addEventListener('input', updateHeading);
+$('asset2Label').addEventListener('input', updateHeading);
 $('runSimulation').addEventListener('click', handleRun);
 $('exportBtn').addEventListener('click', () => exportCsv(state.ledger));
+function updateHeading() {
+  $('pairHeading').textContent = `${$('asset1Label').value||'Asset 1'} ↔ ${$('asset2Label').value||'Asset 2'}`;
+}
 
 async function maybeRunFitness() {
   const f1 = $('asset1File').files[0], f2 = $('asset2File').files[0];
@@ -48,13 +46,12 @@ function renderFitness(fit) {
       <span>Ratio drift: <strong>${fit.ratioDrift}%</strong></span>
       <span>Mean crossings: <strong>${fit.crossingRate}%/bar</strong></span>
       <span>Lag-1 autocorr: <strong>${fit.autocorr1}</strong></span>
-      <span>Bars: <strong>${fit.bars}</strong></span>
+      <span>Bars: <strong>${fit.bars.toLocaleString('en-IN')}</strong></span>
     </div>
     <div class="fitness-explain">
       ${fit.hurst < 0.45 ? '✓ Hurst below 0.45 — pair is mean-reverting, strategy should profit.'
         : fit.hurst < 0.50 ? '~ Hurst near 0.5 — weak mean-reversion, expect modest returns.'
-        : '✗ Hurst above 0.5 — pair is trending. Band will be breached often; vault will be sparse.'}
-      ${fit.ratioDrift > 15 ? ` Ratio drifted ${fit.ratioDrift}% — consider a wider band.` : ''}
+        : '✗ Hurst above 0.5 — pair is trending. Expect underperformance vs hold.'}
     </div>
   </div>`;
   el.classList.remove('hidden');
@@ -69,10 +66,10 @@ function setStatus(type, msg) {
 function getConfig() {
   return {
     bandPct:               +$('bandPct').value,
-    concentration:         +$('concentration').value,
     buyBrokeragePct:       +$('buyBrokeragePct').value,
     sellBrokeragePct:      +$('sellBrokeragePct').value,
     reinvestBrokeragePct:  +$('reinvestBrokeragePct').value,
+    minTradeValue:         +$('minTradeValue').value,
     compoundIntervalHours: +$('compoundIntervalHours').value,
     ilHardStopPct:         +$('ilHardStopPct').value,
     ilHardResumePct:       +$('ilHardResumePct').value,
@@ -106,9 +103,8 @@ async function handleRun() {
       $('pairHeading').textContent = `${a1} ↔ ${a2}`;
 
       renderHero(r);
+      renderDiagnostics(res.performanceSummary, r);
       renderStats(r, a1, a2);
-      renderPerf(res.performanceSummary, r);
-      renderVaultBreakdown(r, a1, a2);
       renderCharts();
       renderLedger(a1, a2);
 
@@ -117,8 +113,8 @@ async function handleRun() {
 
       setStatus(r.vsHold >= 0 ? 'ok' : 'warn',
         `${r.vsHold >= 0 ? 'Outperforms' : 'Underperforms'} hold by ${inr(Math.abs(r.vsHold))} (${dec(r.vsHoldPct,2)}%)` +
-        `  ·  ${r.totalSwaps} swaps executed  ·  ${r.skippedSwaps} skipped (margin guard)` +
-        `  ·  ${r.vaultDeposits} vault deposits`);
+        `  ·  ${r.totalTrades} trades  ·  ${r.vaultDeposits} vault deposits` +
+        `  ·  max swap ${res.performanceSummary.maxSizePct}% of pool`);
     }
   } catch(e) { setStatus('err', e.message || 'Error.'); }
   btn.disabled = false; btn.textContent = 'Run Backtest';
@@ -143,102 +139,63 @@ function renderHero(r) {
     </div>`;
 }
 
+// ── Diagnostics panel — the core deliverable for this request ────────────────
+function renderDiagnostics(p, r) {
+  const thrashOK = p.thrashCount === 0;
+  $('diagnosticsPanel').innerHTML = `
+    <div class="diag-grid">
+      <div class="diag-box ${thrashOK ? 'diag-good' : 'diag-bad'}">
+        <div class="diag-title">Swap Sizing Health</div>
+        <div class="diag-row"><span>Median swap size</span><strong>${p.medianSizePct}% of pool</strong></div>
+        <div class="diag-row"><span>Max swap size</span><strong>${p.maxSizePct}% of pool</strong></div>
+        <div class="diag-row"><span>Thrashing events (&gt;20%)</span><strong class="${thrashOK?'pos':'neg'}">${p.thrashCount}</strong></div>
+        <div class="diag-note">${p.narrative.sizing}</div>
+      </div>
+      <div class="diag-box">
+        <div class="diag-title">Trading Edge</div>
+        <div class="diag-row"><span>Gross P&amp;L</span><strong class="${p.grossTotal>=0?'pos':'neg'}">${p.grossTotal>=0?'+':''}${inr(p.grossTotal)}</strong></div>
+        <div class="diag-row"><span>Brokerage</span><strong class="neg">−${inr(p.brokTotal)}</strong></div>
+        <div class="diag-row"><span>Net</span><strong class="${p.netTotal>=0?'pos':'neg'}">${p.netTotal>=0?'+':''}${inr(p.netTotal)}</strong></div>
+        <div class="diag-row"><span>Friction ratio</span><strong>${dec(p.frictionPct,1)}%</strong></div>
+        <div class="diag-note">${p.narrative.friction}</div>
+      </div>
+      <div class="diag-box">
+        <div class="diag-title">Vault (Realised Profit)</div>
+        <div class="diag-row"><span>Vault value</span><strong class="teal">${inr(p.vaultValue)}</strong></div>
+        <div class="diag-row"><span>Deposits made</span><strong>${p.vaultDeposits}</strong></div>
+        <div class="diag-row"><span>IL (pool+vault vs hold)</span><strong class="${r.ilPct>=0?'pos':'neg'}">${pct(r.ilPct,2)}</strong></div>
+        <div class="diag-note">Vault profit is locked — never re-exposed to IL.</div>
+      </div>
+      <div class="diag-box">
+        <div class="diag-title">Trade Quality</div>
+        <div class="diag-row"><span>Total trades</span><strong>${p.totalTrades}</strong></div>
+        <div class="diag-row"><span>Profitable</span><strong class="pos">${p.profitable} (${dec(p.successPct,0)}%)</strong></div>
+        <div class="diag-row"><span>Alpha Sharpe</span><strong>${dec(p.alphaSharpe,2)}</strong></div>
+        <div class="diag-note">${p.narrative.quality}</div>
+      </div>
+    </div>`;
+}
+
 function renderStats(r, a1, a2) {
   const cells = [
-    { label:'Total value (pool + vault + cash)',  value: inr(r.totalValue),          cls: '' },
-    { label:'Pool asset value',                   value: inr(r.poolFinal),            cls: '' },
-    { label:'Vault value (locked profit)',         value: inr(r.vaultFinal),           cls: 'teal' },
-    { label:'Cash reserve',                        value: inr(r.cashProfit),           cls: r.cashProfit>=0?'up':'down' },
-    { label:'Gross swap P&L',                      value: (r.grossSwapTotal>=0?'+':'')+inr(r.grossSwapTotal), cls: r.grossSwapTotal>=0?'up':'down' },
-    { label:'Net swap P&L (after brokerage)',      value: (r.netSwapTotal>=0?'+':'')+inr(r.netSwapTotal),    cls: r.netSwapTotal>=0?'up':'down' },
-    { label:'Total brokerage paid',                value: '−'+inr(r.totalBrokerage),  cls: 'down' },
-    { label:'Swaps executed',                      value: r.totalSwaps,               cls: '' },
-    { label:'Swaps skipped (margin guard)',        value: r.skippedSwaps,             cls: '' },
-    { label:'Vault deposits',                      value: r.vaultDeposits,            cls: 'teal' },
-    { label:'Band adjustments (vault→pool)',       value: r.vaultAdjustments,         cls: '' },
-    { label:'Band adjustments (pool→vault)',       value: r.poolAdjustments,          cls: '' },
-    { label:`Pool ${a1} shares`,                  value: qty(r.poolX),               cls: '' },
-    { label:`Pool ${a2} shares`,                  value: qty(r.poolY),               cls: '' },
-    { label:`Vault ${a1} shares`,                 value: qty(r.vaultX),              cls: 'teal' },
-    { label:`Vault ${a2} shares`,                 value: qty(r.vaultY),              cls: 'teal' },
+    { label:'Total value (pool+vault+cash)', value: inr(r.totalValue), cls:'' },
+    { label:'Pool asset value',               value: inr(r.poolFinal), cls:'' },
+    { label:'Vault value (locked)',           value: inr(r.vaultFinal), cls:'teal' },
+    { label:'Cash reserve',                   value: inr(r.cashProfit), cls: r.cashProfit>=0?'up':'down' },
+    { label:'Total brokerage paid',           value: '−'+inr(r.totalBrokerage), cls:'down' },
+    { label:'Trades executed',                value: r.totalTrades, cls:'' },
+    { label:'Vault deposits',                 value: r.vaultDeposits, cls:'teal' },
+    { label:'Band adjustments (vault→pool)',  value: r.vaultAdjustments, cls:'' },
+    { label:'Band adjustments (pool→vault)',  value: r.poolAdjustments, cls:'' },
+    { label:`Pool ${a1} shares`,             value: qty(r.poolX), cls:'' },
+    { label:`Pool ${a2} shares`,             value: qty(r.poolY), cls:'' },
+    { label:`Vault ${a1} shares`,            value: qty(r.vaultX), cls:'teal' },
+    { label:`Vault ${a2} shares`,            value: qty(r.vaultY), cls:'teal' },
   ];
   $('statGrid').innerHTML = cells.map(c =>
-    `<div class="stat-cell">
-      <div class="stat-label">${c.label}</div>
-      <div class="stat-value ${c.cls||''}">${c.value}</div>
-    </div>`).join('');
+    `<div class="stat-cell"><div class="stat-label">${c.label}</div><div class="stat-value ${c.cls}">${c.value}</div></div>`
+  ).join('');
   $('exportBtn').classList.remove('hidden');
-}
-
-function renderPerf(p, r) {
-  $('perfPanel').innerHTML = `
-    <div class="mini-stat-grid">
-      <div class="ms-box">
-        <div class="ms-title">Swap Quality</div>
-        <div class="ms-row"><span>Gross P&amp;L</span><strong class="${p.grossSwap>=0?'pos':'neg'}">${p.grossSwap>=0?'+':''}${inr(p.grossSwap)}</strong></div>
-        <div class="ms-row"><span>Brokerage</span><strong class="neg">−${inr(p.brokSwap)}</strong></div>
-        <div class="ms-row"><span>Net cash</span><strong class="${p.netSwap>=0?'pos':'neg'}">${p.netSwap>=0?'+':''}${inr(p.netSwap)}</strong></div>
-        <div class="ms-row"><span>Executed / skipped</span><strong>${p.totalTrades} / ${p.skipped}</strong></div>
-        <div class="ms-badge ${p.successRate===1?'badge-green':p.successRate>0.9?'badge-green':'badge-yellow'}">
-          ${p.successRate===1?'100% — every executed swap was profitable':p.successPct.toFixed(0)+'% profitable'}
-        </div>
-      </div>
-      <div class="ms-box">
-        <div class="ms-title">Vault (Locked Profit)</div>
-        <div class="ms-row"><span>Vault deposits</span><strong class="teal">${p.vaultDeposits}</strong></div>
-        <div class="ms-row"><span>Vault value</span><strong class="teal">${inr(p.vaultValue)}</strong></div>
-        <div class="ms-row"><span>Alpha Sharpe</span><strong>${dec(p.alphaSharpe,2)}</strong></div>
-        <div class="ms-badge badge-blue">Vault = realised, locked profit. Never at risk.</div>
-      </div>
-      <div class="ms-box">
-        <div class="ms-title">Risk</div>
-        <div class="ms-row"><span>Max drawdown</span><strong class="neg">−${inr(Math.abs(p.maxDrawdown))}</strong></div>
-        <div class="ms-row"><span>Max drawdown %</span><strong class="neg">${dec(p.maxDrawdownPct,2)}%</strong></div>
-        <div class="ms-row"><span>IL (pool+vault vs hold)</span><strong class="${r.ilPct>=0?'pos':'neg'}">${pct(r.ilPct,2)}</strong></div>
-        <div class="ms-badge ${r.vsHold>=0?'badge-green':'badge-yellow'}">${r.vsHold>=0?'Strategy beats hold':'Strategy below hold — pair may be trending'}</div>
-      </div>
-    </div>`;
-}
-
-function renderVaultBreakdown(r, a1, a2) {
-  $('vaultBreakdown').innerHTML = `
-    <div class="vault-panel">
-      <div class="vp-title">🔒 Vault Breakdown</div>
-      <div class="vp-row">
-        <div class="vp-cell">
-          <div class="vp-label">Vault ${a1} shares</div>
-          <div class="vp-value teal">${qty(r.vaultX)}</div>
-        </div>
-        <div class="vp-cell">
-          <div class="vp-label">Vault ${a2} shares</div>
-          <div class="vp-value teal">${qty(r.vaultY)}</div>
-        </div>
-        <div class="vp-cell">
-          <div class="vp-label">Vault total value</div>
-          <div class="vp-value teal">${inr(r.vaultFinal)}</div>
-        </div>
-        <div class="vp-cell">
-          <div class="vp-label">Deposits made</div>
-          <div class="vp-value">${r.vaultDeposits}</div>
-        </div>
-        <div class="vp-cell">
-          <div class="vp-label">Pool ${a1} shares</div>
-          <div class="vp-value">${qty(r.poolX)}</div>
-        </div>
-        <div class="vp-cell">
-          <div class="vp-label">Pool ${a2} shares</div>
-          <div class="vp-value">${qty(r.poolY)}</div>
-        </div>
-        <div class="vp-cell">
-          <div class="vp-label">Pool value</div>
-          <div class="vp-value">${inr(r.poolFinal)}</div>
-        </div>
-        <div class="vp-cell">
-          <div class="vp-label">Cash reserve</div>
-          <div class="vp-value ${r.cashProfit>=0?'up':'down'}">${inr(r.cashProfit)}</div>
-        </div>
-      </div>
-    </div>`;
 }
 
 // ── Charts ─────────────────────────────────────────────────────────────────
@@ -246,20 +203,17 @@ const _obs = [];
 function renderCharts() {
   _obs.forEach(o => o.disconnect()); _obs.length = 0;
   if (!state.equity.length) return;
-
-  const step = Math.max(1, Math.floor(state.equity.length / 600));
+  const step = Math.max(1, Math.floor(state.equity.length / 800));
   const pts  = state.equity.filter((_,i) => i % step === 0);
 
   $('legend1').innerHTML = `
-    <div class="leg"><div class="leg-line" style="background:#60a5fa"></div>Total (pool+vault+cash)</div>
+    <div class="leg"><div class="leg-line" style="background:#60a5fa"></div>Total Value</div>
     <div class="leg"><div class="leg-line" style="background:#555"></div>Buy &amp; Hold</div>
-    <div class="leg"><div class="leg-line" style="background:#2dd4bf"></div>Vault value</div>
-    <div class="leg"><div class="leg-line" style="background:#4ade80"></div>Cash</div>
-    <div class="leg"><div class="leg-dash"></div>Vault deposit</div>`;
+    <div class="leg"><div class="leg-line" style="background:#2dd4bf"></div>Vault</div>
+    <div class="leg"><div class="leg-line" style="background:#4ade80"></div>Cash</div>`;
   $('legend2').innerHTML = `
     <div class="leg"><div class="leg-line" style="background:#fbbf24"></div>Alpha vs Hold</div>
-    <div class="leg"><div class="leg-line" style="background:#f87171"></div>IL %×100</div>
-    <div class="leg"><div class="leg-line" style="background:#2dd4bf"></div>Vault value</div>`;
+    <div class="leg"><div class="leg-line" style="background:#f87171"></div>IL %×100</div>`;
 
   [{id:'chart1', series:[
       {key:'totalValue', color:'#60a5fa'},
@@ -270,7 +224,6 @@ function renderCharts() {
    {id:'chart2', series:[
       {key:'alphaINR', color:'#fbbf24'},
       {key:'ilPct',    color:'#f87171', scale:100},
-      {key:'vaultValue',color:'#2dd4bf'},
     ]},
   ].forEach(({id, series}) => {
     const c = $(id); if (!c) return;
@@ -304,7 +257,6 @@ function drawChart(canvas, data, series) {
   const toX=i=>P.l+(i/(data.length-1||1))*cW;
   const toY=v=>P.t+cH-((v-yMin)/yRng)*cH;
 
-  // grid
   for(let g=0;g<=4;g++){
     const yv=yMin+(g/4)*yRng, yp=toY(yv);
     ctx.strokeStyle='#1e1e1e'; ctx.lineWidth=1;
@@ -317,22 +269,14 @@ function drawChart(canvas, data, series) {
     ctx.strokeStyle='#333'; ctx.lineWidth=1; ctx.setLineDash([3,3]);
     ctx.beginPath(); ctx.moveTo(P.l,toY(0)); ctx.lineTo(P.l+cW,toY(0)); ctx.stroke(); ctx.setLineDash([]);
   }
-  // x labels
   for(let i=0;i<=4;i++){
     const idx=Math.round((i/4)*(data.length-1));
     ctx.fillStyle='#555'; ctx.font='10px monospace'; ctx.textAlign='center';
     ctx.fillText(new Date(data[idx].date).toLocaleDateString('en-IN',{day:'numeric',month:'short'}),toX(idx),H-P.b+14);
   }
-
-  // out-of-band shading
   data.forEach((d,i)=>{
-    if(!d.inBand&&i<data.length-1){
-      ctx.fillStyle='rgba(100,100,120,0.10)';
-      ctx.fillRect(toX(i),P.t,toX(i+1)-toX(i),cH);
-    }
+    if(!d.inBand&&i<data.length-1){ ctx.fillStyle='rgba(100,100,120,0.10)'; ctx.fillRect(toX(i),P.t,toX(i+1)-toX(i),cH); }
   });
-
-  // halt shading
   let inH=false,hS=0;
   data.forEach((d,i)=>{
     if(d.halted&&!inH){inH=true;hS=i;}
@@ -340,21 +284,6 @@ function drawChart(canvas, data, series) {
   });
   if(inH){ctx.fillStyle='rgba(248,113,113,0.06)';ctx.fillRect(toX(hS),P.t,toX(data.length-1)-toX(hS),cH);}
 
-  // swap ticks
-  const swapDates = new Set(state.ledger.filter(r=>r.type==='SWAP').map(r=>r.date.substring(0,13)));
-  data.forEach((d,i)=>{
-    if(swapDates.has(d.date.substring(0,13))){ctx.fillStyle='rgba(251,191,36,0.15)';ctx.fillRect(toX(i)-0.5,P.t,1,cH);}
-  });
-
-  // vault deposit markers
-  data.forEach((d,i)=>{
-    if(!d.compoundEvent)return;
-    const x=toX(i);
-    ctx.strokeStyle='rgba(45,212,191,0.7)'; ctx.lineWidth=1.5; ctx.setLineDash([3,4]);
-    ctx.beginPath(); ctx.moveTo(x,P.t); ctx.lineTo(x,P.t+cH); ctx.stroke(); ctx.setLineDash([]);
-  });
-
-  // lines
   for(const s of series){
     const sc=s.scale??1;
     ctx.beginPath(); ctx.strokeStyle=s.color; ctx.lineWidth=1.5; ctx.lineJoin='round';
@@ -370,10 +299,10 @@ function renderLedger(a1, a2) {
     $('ledgerWrap').innerHTML='<div class="empty">No activity.</div>';
     $('ledgerCount').textContent=''; return;
   }
-  const swaps  = ledger.filter(r=>r.type==='SWAP').length;
+  const trades = ledger.filter(r=>r.type==='TRADE').length;
   const vaults = ledger.filter(r=>r.type==='VAULT_DEPOSIT').length;
   const adjs   = ledger.filter(r=>r.type==='ADJUST').length;
-  $('ledgerCount').textContent = `${swaps} swaps · ${vaults} vault deposits · ${adjs} adjustments`;
+  $('ledgerCount').textContent = `${trades} trades · ${vaults} vault deposits · ${adjs} adjustments`;
 
   const rows = ledger.slice(-600);
   if (ledger.length > 600) {
@@ -386,56 +315,44 @@ function renderLedger(a1, a2) {
       <tr class="row-vault">
         <td>${fdt(row.date)}</td>
         <td><span class="tag-vault">🔒 VAULT #${row.depositEvent}</span></td>
-        <td colspan="4">Bought ${qty(row.buyX)} ${a1} + ${qty(row.buyY)} ${a2} · Cost ${inr(row.actualCost)} · Brok ${inr(row.brokCost)}</td>
+        <td colspan="3">Bought ${qty(row.buyX)} ${a1} + ${qty(row.buyY)} ${a2} · Cost ${inr(row.actualCost)} · Brok ${inr(row.brokCost)}</td>
         <td class="r teal">+${inr(row.actualCost)}</td>
-        <td class="r down">−${inr(row.brokCost)}</td>
         <td class="r">${inr(row.cashAfter)}</td>
         <td class="r teal">${qty(row.vaultX)}</td>
         <td class="r teal">${qty(row.vaultY)}</td>
-        <td class="r">—</td><td class="r">—</td>
+        <td class="r">—</td>
       </tr>`;
     if (row.type === 'ADJUST') return `
       <tr class="row-adjust">
         <td>${fdt(row.date)}</td>
         <td><span class="tag-adjust">${row.adjType}</span></td>
-        <td colspan="4">Ratio ${dec(row.rNow,4)} outside [${dec(row.rLow,4)}, ${dec(row.rHigh,4)}]</td>
-        <td class="r">—</td><td class="r">—</td>
+        <td colspan="3">Ratio ${dec(row.rNow,4)} outside [${dec(row.rLow,4)}, ${dec(row.rHigh,4)}]</td>
+        <td class="r">—</td>
         <td class="r">${inr(row.cashProfit)}</td>
         <td class="r">${qty(row.poolX)}</td><td class="r">${qty(row.poolY)}</td>
-        <td class="r teal">${qty(row.vaultX)}</td><td class="r teal">${qty(row.vaultY)}</td>
+        <td class="r">—</td>
       </tr>`;
-    // SWAP row
     return `<tr>
       <td>${fdt(row.date)}</td>
       <td>${row.action}</td>
       <td class="r">${qty(row.sellQty)}</td>
       <td class="r down">−${inr(row.sellVal)}</td>
       <td class="r">${qty(row.buyQty)}</td>
-      <td class="r up">+${inr(row.buyVal)}</td>
       <td class="r ${row.gross>=0?'up':'down'}">${row.gross>=0?'+':'−'}${inr(Math.abs(row.gross))}</td>
-      <td class="r down">−${inr(row.brok)}</td>
       <td class="r">${inr(row.cashProfit)}</td>
-      <td class="r">${qty(row.poolX)}</td><td class="r">${qty(row.poolY)}</td>
+      <td class="r">${qty(row.poolX)}</td>
       <td class="r ${row.ilPct>=0?'up':'down'}">${dec(row.ilPct,2)}%</td>
-      <td class="r">${dec(row.rNow,4)}</td>
     </tr>`;
   }).join('');
 
   $('ledgerWrap').innerHTML = `
-    <div class="legend-row">
-      <span class="leg-item"><span class="leg-dot swap-dot"></span>Swap</span>
-      <span class="leg-item"><span class="leg-dot comp-dot"></span>Vault deposit</span>
-      <span class="leg-item"><span class="leg-dot adj-dot"></span>Band adjustment</span>
-    </div>
     <div class="tbl-wrap"><table>
       <thead><tr>
         <th>Time</th><th>Action</th>
         <th class="r">Sell qty</th><th class="r">Sell value</th>
-        <th class="r">Buy qty</th><th class="r">Buy value</th>
-        <th class="r">Gross P&amp;L</th><th class="r">Brokerage</th>
-        <th class="r">Cash</th>
-        <th class="r">Pool ${a1}</th><th class="r">Pool ${a2}</th>
-        <th class="r">IL%</th><th class="r">Ratio</th>
+        <th class="r">Buy qty</th><th class="r">Gross P&amp;L</th>
+        <th class="r">Cash</th><th class="r">Pool ${a1}</th>
+        <th class="r">IL%</th>
       </tr></thead>
       <tbody>${html}</tbody>
     </table></div>`;
@@ -443,17 +360,15 @@ function renderLedger(a1, a2) {
 
 function exportCsv(ledger) {
   const h = ['Date','Type','Action','SellQty','SellValue','BuyQty','BuyValue',
-             'Gross','Brokerage','Net','Cash','PoolA1','PoolA2','VaultA1','VaultA2',
-             'IL_Pct','Ratio','L'];
+             'Gross','Brokerage','Net','Cash','PoolA1','PoolA2','VaultA1','VaultA2','IL_Pct'];
   const lines = [h.join(',')].concat(ledger.map(r => [
     r.date, r.type, `"${r.action||''}"`,
     r.sellQty??'', r.sellVal??'', r.buyQty??'', r.buyVal??'',
     r.gross??'', r.brok??'', r.net??'', r.cashProfit??r.cashAfter??'',
-    r.poolX??'', r.poolY??'', r.vaultX??'', r.vaultY??'',
-    r.ilPct??'', r.rNow??'', r.L??'',
+    r.poolX??'', r.poolY??'', r.vaultX??'', r.vaultY??'', r.ilPct??'',
   ].join(',')));
   const blob = new Blob([lines.join('\n')], {type:'text/csv'});
   const url  = URL.createObjectURL(blob);
-  Object.assign(document.createElement('a'),{href:url,download:'pool_vault_ledger.csv'}).click();
+  Object.assign(document.createElement('a'),{href:url,download:'institutional_ledger.csv'}).click();
   URL.revokeObjectURL(url);
 }

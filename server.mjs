@@ -34,4 +34,4 @@ http.createServer((req, res) => {
     if (!err && stats.isFile()) { sendFile(res, filePath); return; }
     sendFile(res, path.join(publicDir, 'index.html'));
   });
-}).listen(port, () => console.log(`AMM Calculus Engine running at http://localhost:${port}`));
+}).listen(port, () => console.log(`Institutional Pair Rebalancer running at http://localhost:${port}`));

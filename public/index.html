@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Pool + Vault Strategy</title>
+  <title>Institutional Pair Rebalancer — Diagnostics</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link rel="stylesheet" href="/styles.css"/>
@@ -13,8 +13,8 @@
 
   <aside class="sidebar">
     <div class="brand">
-      <h1>Pool + Vault</h1>
-      <p>V3 swaps every minute the price is within a fixed ±5% band — no hourly averaging. Every executed swap clears its own brokerage cost. Profits buy vault shares — locked, never traded.</p>
+      <h1>Pair Rebalancer</h1>
+      <p>Exact 50/50 rebalancing at minute resolution — no V3 thrashing. Every trade is sized to the real price move, never the full band width. Diagnostics expose swap-size health, friction, and IL on every run.</p>
     </div>
 
     <div class="section">
@@ -40,7 +40,6 @@
       <div class="field">
         <label>Capital (₹)</label>
         <input id="realCapital" type="number" value="2000000" step="100000" min="10000"/>
-        <span class="hint">Deployed 50/50 between the two stocks at start.</span>
       </div>
     </div>
 
@@ -51,14 +50,13 @@
       <div class="field">
         <label>Band width ± (%)</label>
         <input id="bandPct" type="number" value="5" min="0.5" max="50" step="0.5"/>
-        <span class="hint">Fixed band around the initial price ratio. Swaps happen only inside this range.</span>
+        <span class="hint">Fixed band around the initial price ratio. Trades happen only inside this range; outside it, vault adjustment kicks in.</span>
       </div>
       <div class="field">
-        <label>Concentration factor (×)</label>
-        <input id="concentration" type="number" value="2" min="1.1" max="20" step="0.1"/>
-        <span class="hint">How amplified the pool liquidity is vs full-range. Higher = more swaps per price move, more fees, more IL risk.</span>
+        <label>Minimum trade value (₹)</label>
+        <input id="minTradeValue" type="number" value="200" min="0" max="50000" step="50"/>
+        <span class="hint">Skip rebalances smaller than this. Prevents brokerage drag from chasing sub-rupee ticks. No profit-margin filter — any trade that clears this floor executes.</span>
       </div>
-      <div class="hint" style="margin-top:6px">Every swap that clears its own brokerage cost (net &gt; 0) executes — no extra margin filter.</div>
     </div>
 
     <hr/>
@@ -78,7 +76,6 @@
       <div class="field" style="margin-top:4px">
         <label>Vault deposit brokerage (%)</label>
         <input id="reinvestBrokeragePct" type="number" value="0.15" min="0" max="5" step="0.01"/>
-        <span class="hint">Charged when buying shares to lock in the vault.</span>
       </div>
     </div>
 
@@ -89,7 +86,6 @@
       <div class="field">
         <label>Check vault every (hours)</label>
         <input id="compoundIntervalHours" type="number" value="24" min="1" max="168"/>
-        <span class="hint">How often to check if cash profit is enough to buy vault shares.</span>
       </div>
     </div>
 
@@ -124,21 +120,22 @@
       </div>
 
       <div class="hero-row" id="heroRow"></div>
-      <div class="stat-grid" id="statGrid" style="margin-top:16px"></div>
-      <div id="perfPanel" style="margin-top:20px"></div>
 
-      <!-- Pool vs Vault breakdown -->
-      <div class="vault-breakdown" id="vaultBreakdown" style="margin-top:20px"></div>
+      <div class="sec-head" style="margin-top:24px">
+        <h2>Diagnostics — what's actually driving returns</h2>
+      </div>
+      <div id="diagnosticsPanel"></div>
+
+      <div class="stat-grid" id="statGrid" style="margin-top:20px"></div>
 
       <div class="chart-block" style="margin-top:20px">
         <div class="legend" id="legend1"></div>
         <div class="chart-wrap"><canvas id="chart1"></canvas></div>
-        <div class="chart-label">Yellow = swap · Green dashed = vault deposit · Grey = out of band</div>
+        <div class="chart-label">Grey = out of band · Red = halted</div>
       </div>
       <div class="chart-block">
         <div class="legend" id="legend2"></div>
         <div class="chart-wrap"><canvas id="chart2"></canvas></div>
-        <div class="chart-label">Alpha (strategy − hold) · IL%×100 · Vault value</div>
       </div>
 
       <div>
