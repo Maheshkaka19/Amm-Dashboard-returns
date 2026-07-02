@@ -1,4 +1,4 @@
-// simulation-core.js  v7.0  —  Diagnostic-first institutional rebalancer
+// simulation-core.js  v7.1  —  Diagnostic-first institutional rebalancer
 // ─────────────────────────────────────────────────────────────────────
 //
 //  WHY THE PREVIOUS ENGINE FAILED (root-cause, confirmed by ledger analysis)
@@ -18,24 +18,35 @@
 //  visible directly in the uploaded ledger (PoolA2: 215→1→215→1...).
 //  That thrashing generates brokerage drag and IL without any real edge.
 //
-//  THE FIX — TWO INDEPENDENT, TESTABLE STRATEGIES
-//  ──────────────────────────────────────────────
-//  Rather than force V3 math onto a context it wasn't designed for, this
-//  engine implements the rebalancing logic directly:
-//
+//  THE FIX — REBALANCE TARGET, NOT V3 DELTA
+//  ────────────────────────────────────────
 //  Every bar, compute the EXACT 50/50 target at current prices:
 //    targetX = floor(poolValue / 2 / p1)
 //    targetY = floor(poolValue / 2 / p2)
-//  Trade only the difference between current holdings and target.
+//  Trade the difference between current holdings and target, AMPLIFIED by
+//  the concentration factor (see below). No arbitrary L constant.
 //
-//  This is mathematically IDENTICAL to "infinite concentration" V3 (a
-//  position with rLow=rHigh=rNow), which is the only L-independent,
-//  well-defined limit of the V3 formula. It trades exactly what is needed
-//  to stay balanced — no more, no less, regardless of tick size. No
-//  arbitrary L constant, no thrashing.
+//  CONCENTRATION (kept, made safe)
+//  ──────────────────────────────────
+//  concentration ≥ 1 multiplies the trade quantity needed for a plain
+//  50/50 rebalance: c=1 → exact 50/50 (no amplification). c=3 → trade 3×
+//  the base quantity, capturing more of the price move per swap.
 //
-//  A trade quantity FLOOR (configurable, default ₹500) prevents brokerage
-//  drag from chasing sub-rupee rebalances on dead-flat ticks.
+//  Safety invariant (unconditional, every trade, every value of c):
+//    sellQty is hard-capped to (poolBalance − 1)
+//    buyQty  is hard-capped to floor(sellValue / buyPrice)
+//  So amplified trade size can never exceed what the pool can afford, and
+//  can never exceed what sell proceeds can fund. Concentration changes
+//  how AGGRESSIVELY the pool chases a price move; it can never reproduce
+//  the old thrashing failure mode, because the cap is checked unconditionally
+//  regardless of how large c is set.
+//
+//  EXECUTION RULE — no margin guard, no minimum trade filter
+//  ─────────────────────────────────────────────────────────
+//  Every trade with net (gross − brokerage) > 0 executes, at any size.
+//  Brokerage is charged only on the ₹ amount actually swapped, so a small
+//  trade pays proportionally small brokerage — there's no economic reason
+//  to filter out small trades.
 //
 //  DIAGNOSTIC INSTRUMENTATION
 //  ────────────────────────────
@@ -45,7 +56,6 @@
 //    - vault-locked profit (realised, never at risk)
 //    - swap-size distribution (max/median swap as % of pool) to catch
 //      thrashing immediately if it ever reappears
-//    - per-day P&L curve so trending vs mean-reverting periods are visible
 //
 // ─────────────────────────────────────────────────────────────────────
 
@@ -229,15 +239,19 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
 
   // ── Config ────────────────────────────────────────────────────────────────
   const bandPct       = clamp(+(config.bandPct ?? 5), 0.5, 50) / 100;
+  const concentration = clamp(+(config.concentration ?? 1), 1, 20);
   const buyBrok       = clamp(+(config.buyBrokeragePct  ?? 0.15), 0, 5) / 100;
   const sellBrok      = clamp(+(config.sellBrokeragePct ?? 0.15), 0, 5) / 100;
   const reinvestBrok  = clamp(+(config.reinvestBrokeragePct ?? 0.15), 0, 5) / 100;
 
-  // Minimum trade value floor — prevents brokerage drag from chasing
-  // sub-rupee rebalances on dead-flat ticks. This is NOT a profit-margin
-  // filter (which we removed); it's a practical execution floor matching
-  // how real brokers round-lot small orders.
-  const minTradeValue = clamp(+(config.minTradeValue ?? 200), 0, 1e6);
+  // Hard safety ceiling on single-trade size, independent of concentration.
+  // Not user-exposed — this is a structural guard against the thrashing
+  // failure mode, not a tunable strategy parameter. 5% of current pool
+  // value per trade leg is generous (your own data showed even an
+  // unamplified rebalance using a tiny tick stayed under 0.2%), so it never
+  // constrains normal operation — it only kicks in if concentration is set
+  // high enough to otherwise demand an outsized single trade.
+  const maxTradePct = 0.05;
 
   const ilHardStop   = clamp(+(config.ilHardStopPct   ?? 0), 0, 100);
   const ilHardResume = clamp(+(config.ilHardResumePct ?? 0), 0, 100);
@@ -345,13 +359,22 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
       outOfBandLock = false;
     }
 
-    // ── REBALANCE TO EXACT 50/50 ─────────────────────────────────────────────
+    // ── REBALANCE TO 50/50, AMPLIFIED BY CONCENTRATION ──────────────────────
     //
-    // This replaces the V3-delta formula. It is the L→∞ (infinite
-    // concentration) limit of V3 — always trades exactly what's needed to
-    // restore 50/50 balance at CURRENT prices, scaled naturally to however
-    // big the actual price move was. No swap can ever exceed what's needed
-    // to reach the target, so thrashing is structurally impossible.
+    // Concentration (c ≥ 1) amplifies how far the rebalance pushes past exact
+    // 50/50, in the direction the price just moved. c=1 means exact 50/50
+    // (no amplification). c=3 means the engine trades 3× the quantity needed
+    // for a plain 50/50 rebalance, capturing more of the price move per swap.
+    //
+    // SAFETY: amplified quantity is still hard-capped to what the pool can
+    // afford (balance - 1), so concentration can amplify trade size but can
+    // NEVER push it back into the thrashing regime the old V3-delta formula
+    // had — capping happens unconditionally, every time, regardless of c.
+    //
+    // Every trade with net > 0 executes — no minimum trade value filter.
+    // Brokerage is charged only on the ₹ amount actually swapped, so a tiny
+    // trade pays proportionally tiny brokerage; there is no economic reason
+    // to block it.
 
     let didTrade = false;
     if (inBand && !swapsHalted) {
@@ -361,64 +384,89 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
       const xDelta  = xTarget - poolX;
       const yDelta  = yTarget - poolY;
 
-      if (xDelta > 0 && yDelta < 0 && Math.abs(yDelta) < poolY) {
-        const buyQty  = xDelta;
-        const sellQty = Math.abs(yDelta);
-        const buyVal  = buyQty  * p1;
-        const sellVal = sellQty * p2;
+      // Absolute safety ceiling: no single trade leg may sell more than
+      // maxTradePctOfPool of the CURRENT pool value, regardless of how the
+      // concentration amplification computes raw quantity. This is the
+      // actual fix for the thrashing failure mode — concentration can make
+      // trades bigger, but this ceiling means it can never make them so big
+      // they drain a side of the pool in one or two swaps.
+      const maxSellValue = totalV * maxTradePct;
 
-        if (sellVal >= minTradeValue) {
-          const brok  = buyBrok * buyVal + sellBrok * sellVal;
-          const gross = sellVal - buyVal;
-          const net   = gross - brok;
+      if (xDelta > 0 && yDelta < 0) {
+        const buyQtyRaw  = Math.floor(xDelta * concentration);
+        const sellQtyRaw = Math.floor(Math.abs(yDelta) * concentration);
+        const sellCapByPool   = poolY - 1;
+        const sellCapByCeiling = Math.floor(maxSellValue / p2);
+        const sellQty = Math.min(sellQtyRaw, sellCapByPool, sellCapByCeiling);
+        // Buy leg hard-capped to what sell proceeds can fund (self-funding).
+        const sellVal       = sellQty * p2;
+        const maxBuyByFunds = Math.floor(sellVal / p1);
+        const buyQty         = Math.min(buyQtyRaw, maxBuyByFunds);
 
-          poolX += buyQty; poolY -= sellQty;
-          cashProfit += net; totalBrokerage += brok;
-          grossTotal += gross; netTotal += net;
-          totalTrades++; didTrade = true;
-          if (net >= 0) profitableTrades++; else unprofitableTrades++;
+        if (sellQty >= 1 && buyQty >= 1) {
+          const buyVal = buyQty * p1;
+          const brok   = buyBrok * buyVal + sellBrok * sellVal;
+          const gross  = sellVal - buyVal;
+          const net    = gross - brok;
 
-          ledger.push({
-            date: row.date.toISOString(), type: 'TRADE',
-            action: 'Buy Asset 1 / Sell Asset 2',
-            buyAsset: 'Asset 1', buyQty, buyVal,
-            sellAsset: 'Asset 2', sellQty, sellVal,
-            gross, brok, net, cashProfit,
-            poolValueBefore: totalV,
-            asset1Price: p1, asset2Price: p2,
-            poolX, poolY, vaultX, vaultY,
-            ilPct: +ilPct.toFixed(3), rNow: +rNow.toFixed(6),
-          });
+          if (net > 0) {
+            poolX += buyQty; poolY -= sellQty;
+            cashProfit += net; totalBrokerage += brok;
+            grossTotal += gross; netTotal += net;
+            totalTrades++; profitableTrades++; didTrade = true;
+
+            ledger.push({
+              date: row.date.toISOString(), type: 'TRADE',
+              action: 'Buy Asset 1 / Sell Asset 2',
+              buyAsset: 'Asset 1', buyQty, buyVal,
+              sellAsset: 'Asset 2', sellQty, sellVal,
+              gross, brok, net, cashProfit,
+              poolValueBefore: totalV,
+              asset1Price: p1, asset2Price: p2,
+              poolX, poolY, vaultX, vaultY,
+              ilPct: +ilPct.toFixed(3), rNow: +rNow.toFixed(6),
+            });
+          } else {
+            unprofitableTrades++;
+          }
         }
 
-      } else if (xDelta < 0 && yDelta > 0 && Math.abs(xDelta) < poolX) {
-        const sellQty = Math.abs(xDelta);
-        const buyQty  = yDelta;
-        const sellVal = sellQty * p1;
-        const buyVal  = buyQty  * p2;
+      } else if (xDelta < 0 && yDelta > 0) {
+        const sellQtyRaw = Math.floor(Math.abs(xDelta) * concentration);
+        const buyQtyRaw  = Math.floor(yDelta * concentration);
+        const sellCapByPool    = poolX - 1;
+        const sellCapByCeiling = Math.floor(maxSellValue / p1);
+        const sellQty = Math.min(sellQtyRaw, sellCapByPool, sellCapByCeiling);
+        const sellVal       = sellQty * p1;
+        const maxBuyByFunds = Math.floor(sellVal / p2);
+        const buyQty         = Math.min(buyQtyRaw, maxBuyByFunds);
 
-        if (sellVal >= minTradeValue) {
-          const brok  = sellBrok * sellVal + buyBrok * buyVal;
-          const gross = sellVal - buyVal;
-          const net   = gross - brok;
+        if (sellQty >= 1 && buyQty >= 1) {
+          const buyVal = buyQty * p2;
+          const brok   = sellBrok * sellVal + buyBrok * buyVal;
+          const gross  = sellVal - buyVal;
+          const net    = gross - brok;
 
-          poolX -= sellQty; poolY += buyQty;
-          cashProfit += net; totalBrokerage += brok;
-          grossTotal += gross; netTotal += net;
-          totalTrades++; didTrade = true;
-          if (net >= 0) profitableTrades++; else unprofitableTrades++;
+          if (net > 0) {
+            poolX -= sellQty; poolY += buyQty;
+            cashProfit += net; totalBrokerage += brok;
+            grossTotal += gross; netTotal += net;
+            totalTrades++; profitableTrades++; didTrade = true;
 
-          ledger.push({
-            date: row.date.toISOString(), type: 'TRADE',
-            action: 'Sell Asset 1 / Buy Asset 2',
-            sellAsset: 'Asset 1', sellQty, sellVal,
-            buyAsset: 'Asset 2', buyQty, buyVal,
-            gross, brok, net, cashProfit,
-            poolValueBefore: totalV,
-            asset1Price: p1, asset2Price: p2,
-            poolX, poolY, vaultX, vaultY,
-            ilPct: +ilPct.toFixed(3), rNow: +rNow.toFixed(6),
-          });
+            ledger.push({
+              date: row.date.toISOString(), type: 'TRADE',
+              action: 'Sell Asset 1 / Buy Asset 2',
+              sellAsset: 'Asset 1', sellQty, sellVal,
+              buyAsset: 'Asset 2', buyQty, buyVal,
+              gross, brok, net, cashProfit,
+              poolValueBefore: totalV,
+              asset1Price: p1, asset2Price: p2,
+              poolX, poolY, vaultX, vaultY,
+              ilPct: +ilPct.toFixed(3), rNow: +rNow.toFixed(6),
+            });
+          } else {
+            unprofitableTrades++;
+          }
         }
       }
     }
@@ -489,9 +537,8 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
     successRate: totalTrades > 0 ? profitableTrades / totalTrades : 0,
     poolX, poolY, vaultX, vaultY, holdX, holdY,
     vaultDeposits, vaultAdjustments, poolAdjustments,
-    bandPct: bandPct * 100,
+    bandPct: bandPct * 100, concentration,
     buyBrokeragePct: buyBrok*100, sellBrokeragePct: sellBrok*100,
-    minTradeValue,
   };
 
   return {

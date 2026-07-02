@@ -69,7 +69,7 @@ function getConfig() {
     buyBrokeragePct:       +$('buyBrokeragePct').value,
     sellBrokeragePct:      +$('sellBrokeragePct').value,
     reinvestBrokeragePct:  +$('reinvestBrokeragePct').value,
-    minTradeValue:         +$('minTradeValue').value,
+    concentration:         +$('concentration').value,
     compoundIntervalHours: +$('compoundIntervalHours').value,
     ilHardStopPct:         +$('ilHardStopPct').value,
     ilHardResumePct:       +$('ilHardResumePct').value,

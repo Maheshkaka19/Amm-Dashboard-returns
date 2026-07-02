@@ -53,9 +53,9 @@
         <span class="hint">Fixed band around the initial price ratio. Trades happen only inside this range; outside it, vault adjustment kicks in.</span>
       </div>
       <div class="field">
-        <label>Minimum trade value (₹)</label>
-        <input id="minTradeValue" type="number" value="200" min="0" max="50000" step="50"/>
-        <span class="hint">Skip rebalances smaller than this. Prevents brokerage drag from chasing sub-rupee ticks. No profit-margin filter — any trade that clears this floor executes.</span>
+        <label>Concentration (×)</label>
+        <input id="concentration" type="number" value="1" min="1" max="20" step="0.5"/>
+        <span class="hint">Amplifies trade size beyond plain 50/50 rebalancing. 1× = exact 50/50 only. Higher = trades more aggressively per price move, capturing more edge but more IL risk. Hard-capped at 5% of pool value per trade regardless of setting — cannot thrash.</span>
       </div>
     </div>
 
