@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Institutional Pair Pool — v8.0</title>
+  <title>Pool + Vault  v9.0</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link rel="stylesheet" href="/styles.css"/>
@@ -13,8 +13,8 @@
 
   <aside class="sidebar">
     <div class="brand">
-      <h1>Pool + Vault  v8.0</h1>
-      <p>V3 concentrated liquidity on a fixed ±band. Every swap net-profitable after brokerage. Vault tracks market ratio on breach. Reinvestment corrects IL. All 6 design invariants machine-verified.</p>
+      <h1>Pool + Vault  v9.0</h1>
+      <p>Strict alternating V3 swaps within a fixed band. Each swap only fires after the ratio reverses ≥ minMove%. Same-direction moves trigger a vault rebalance. Alpha buys the outperforming stock into the vault.</p>
     </div>
 
     <div class="section">
@@ -46,23 +46,28 @@
     <hr/>
 
     <div class="section">
-      <div class="section-title">Pool — Points 1, 3</div>
+      <div class="section-title">Pool Settings</div>
       <div class="field">
         <label>Band width ± (%)</label>
         <input id="bandPct" type="number" value="5" min="0.5" max="50" step="0.5"/>
-        <span class="hint">Fixed band around initial ratio. Swaps run inside. Vault adjustment fires on breach.</span>
+        <span class="hint">Fixed band around initial ratio. V3 swaps run inside. Vault adjusts on breach.</span>
       </div>
       <div class="field">
         <label>Concentration (×)</label>
         <input id="concentration" type="number" value="2" min="1" max="20" step="0.5"/>
-        <span class="hint">Scales L (liquidity constant) on the band. Higher = more swaps per price move. Hard-capped at 5% of pool per leg — no thrashing possible.</span>
+        <span class="hint">Multiplies L on the band. Higher = larger swap per price move. Hard-capped at 5% pool per leg.</span>
+      </div>
+      <div class="field">
+        <label>Min move to trigger swap (%)</label>
+        <input id="minMovePct" type="number" value="0.5" min="0.1" max="10" step="0.1"/>
+        <span class="hint">Ratio must reverse by at least this % from the last swap's price before the next (alternate) swap fires. 0.5–1% recommended.</span>
       </div>
     </div>
 
     <hr/>
 
     <div class="section">
-      <div class="section-title">Brokerage — Point 1</div>
+      <div class="section-title">Brokerage</div>
       <div class="two-col">
         <div class="field">
           <label>Buy (%)</label>
@@ -74,7 +79,7 @@
         </div>
       </div>
       <div class="field" style="margin-top:4px">
-        <label>Vault deposit brokerage (%)</label>
+        <label>Alpha reinvestment brokerage (%)</label>
         <input id="reinvestBrokeragePct" type="number" value="0.15" min="0" max="5" step="0.01"/>
       </div>
     </div>
@@ -82,11 +87,11 @@
     <hr/>
 
     <div class="section">
-      <div class="section-title">Vault — Points 2, 5</div>
+      <div class="section-title">Alpha Vault</div>
       <div class="field">
-        <label>Check vault every (hours)</label>
+        <label>Reinvest every (hours)</label>
         <input id="compoundIntervalHours" type="number" value="24" min="1" max="168"/>
-        <span class="hint">Cash profit is locked into vault shares at this interval. Deposits preferentially buy the IL-underweight asset (Point 5).</span>
+        <span class="hint">Cash profit buys the stock with the highest gain since pool start. Shares go to vault for future rebalancing.</span>
       </div>
     </div>
 
@@ -111,12 +116,10 @@
   </aside>
 
   <main class="content">
-
     <div id="statusBar" class="status">Upload two 1-min NSE CSV files and click Run Backtest.</div>
     <div id="fitnessPanel" class="hidden"></div>
 
     <div id="resultsSection" class="hidden">
-
       <div class="sec-head">
         <h2 id="pairHeading">Asset 1  ↔  Asset 2</h2>
         <button id="exportBtn" class="export-btn hidden">Export CSV</button>
@@ -124,9 +127,7 @@
 
       <div class="hero-row" id="heroRow"></div>
 
-      <div class="sec-head" style="margin-top:24px">
-        <h2>Diagnostics</h2>
-      </div>
+      <div class="sec-head" style="margin-top:24px"><h2>Diagnostics</h2></div>
       <div id="diagnosticsPanel"></div>
 
       <div class="stat-grid" id="statGrid" style="margin-top:16px"></div>
@@ -136,7 +137,6 @@
         <div class="chart-wrap"><canvas id="chart1"></canvas></div>
         <div class="chart-label">Grey = out of band · Green dashed = vault deposit · Red = halted</div>
       </div>
-
       <div class="chart-block">
         <div class="legend" id="legend2"></div>
         <div class="chart-wrap"><canvas id="chart2"></canvas></div>
@@ -151,11 +151,9 @@
         <div id="ledgerNote" class="tbl-note hidden"></div>
         <div id="ledgerWrap"><div class="empty">No activity yet.</div></div>
       </div>
-
     </div>
 
     <div id="emptyState" class="empty">Upload two 1-minute NSE CSV files and click Run Backtest.</div>
-
   </main>
 </div>
 <script type="module" src="/app.js"></script>
