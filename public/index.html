@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Pool + Vault  v9.0</title>
+  <title>Pool + Vault  v10.0</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link rel="stylesheet" href="/styles.css"/>
@@ -13,8 +13,8 @@
 
   <aside class="sidebar">
     <div class="brand">
-      <h1>Pool + Vault  v9.0</h1>
-      <p>Strict alternating V3 swaps within a fixed band. Each swap only fires after the ratio reverses ≥ minMove%. Same-direction moves trigger a vault rebalance. Alpha buys the outperforming stock into the vault.</p>
+      <h1>Pool + Vault  v10.0</h1>
+      <p>Real Uniswap V3 math — no artificial concentration multiplier, no synthetic swap cap. Band width alone sets concentration. Strict alternating swaps track the curve; vault rebalances every further minMove% as a trend extends. Sharpe, Calmar, and max drawdown included.</p>
     </div>
 
     <div class="section">
@@ -49,13 +49,8 @@
       <div class="section-title">Pool Settings</div>
       <div class="field">
         <label>Band width ± (%)</label>
-        <input id="bandPct" type="number" value="5" min="0.5" max="50" step="0.5"/>
-        <span class="hint">Fixed band around initial ratio. V3 swaps run inside. Vault adjusts on breach.</span>
-      </div>
-      <div class="field">
-        <label>Concentration (×)</label>
-        <input id="concentration" type="number" value="2" min="1" max="20" step="0.5"/>
-        <span class="hint">Multiplies L on the band. Higher = larger swap per price move. Hard-capped at 5% pool per leg.</span>
+        <input id="bandPct" type="number" value="10" min="0.5" max="50" step="0.5"/>
+        <span class="hint">Fixed band around the initial ratio. This alone determines concentration — narrower band = higher concentration, exactly as real Uniswap V3 works. No separate concentration input; there isn't one in real V3 either.</span>
       </div>
       <div class="field">
         <label>Min move to trigger swap (%)</label>

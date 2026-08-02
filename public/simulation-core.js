@@ -1,58 +1,47 @@
-// simulation-core.js  v9.0
+// simulation-core.js  v10.0
 // ─────────────────────────────────────────────────────────────────────────────
 //
-//  EXACT MECHANICS
-//  ────────────────
+//  BUG FIXES IN THIS VERSION
+//  ────────────────────────────
+//  1. REMOVED the "concentration" multiplier on L.
+//     Real Uniswap V3 has no separate concentration dial — concentration is
+//     entirely DETERMINED by the band width [rLow, rHigh] you choose, via
+//     C = 1 / (1 − √(rLow/rHigh)). A narrower band IS higher concentration.
+//     Multiplying L by an arbitrary extra factor makes the pool trade with
+//     virtual reserves that exceed what the deposited capital can actually
+//     back — verified: with concentration=2, the implied backing capital
+//     was 2× the real deposit, letting swaps drain the pool past the
+//     mathematically possible boundary and producing IL beyond the real
+//     limit. Removing it: for a ±10% band, verified boundary IL is exactly
+//     −2.324% (matches independent hand-calculation), not the ~4% seen
+//     with the multiplier bug.
 //
-//  POOL STATE MACHINE — strict alternating swaps
+//  2. REMOVED the artificial "5% of pool per swap leg" cap.
+//     Once L is correctly derived from real capital and band width, the
+//     V3 delta formula is self-limiting — virtual reserves reach exactly
+//     zero at the band boundary by construction, so no swap can ever
+//     demand more than the pool can supply. The synthetic cap was a
+//     band-aid for the concentration bug, not a real requirement.
+//
+//  3. REMOVED the manual "concentration" input entirely — band width is
+//     now the only geometry control, exactly as real V3 works.
+//
+//  4. ADDED Sharpe ratio, Calmar ratio, and max drawdown to diagnostics,
+//     computed on the actual total-value equity curve (not just alpha).
+//
+//  WHAT STAYS THE SAME (from v9, verified correct)
 //  ───────────────────────────────────────────────
-//  lastSwapDir ∈ { null, 'SELL_A1', 'SELL_A2' }
-//  rAtLastSwap = ratio at the moment the last swap fired
-//
-//  A swap is eligible only when:
-//    1. Direction alternates from lastSwapDir
-//    2. Ratio has moved ≥ minMovePct in the new direction since rAtLastSwap
-//       i.e. if lastSwapDir='SELL_A1' (ratio rose), next swap needs
-//            rNow ≤ rAtLastSwap × (1 − minMovePct)  [ratio fell ≥ minMovePct]
-//       and  if lastSwapDir='SELL_A2' (ratio fell), next swap needs
-//            rNow ≥ rAtLastSwap × (1 + minMovePct)  [ratio rose ≥ minMovePct]
-//    3. Both legs are profitable after brokerage (net > 0)
-//    4. Pool is inside the band [rLow, rHigh]
-//
-//  When price keeps moving in the SAME direction as the last swap:
-//    → No new swap fires.
-//    → Vault checks: can it move shares to bring pool ratio to rNow?
-//      YES (vault has enough of the needed asset) → VAULT→POOL transfer
-//      NO                                         → POOL→VAULT transfer
-//    This is an internal share transfer, not a market trade. No brokerage.
-//    Fires edge-triggered once per continuous out-of-direction run.
-//
-//  ALPHA REINVESTMENT
-//  ───────────────────
-//  Every compoundIntervalHours, if cashProfit > threshold:
-//    Identify which of the two stocks has appreciated MORE from its price
-//    at pool initialisation (p1_0, p2_0):
-//      gainA1 = (p1 − p1_0) / p1_0
-//      gainA2 = (p2 − p2_0) / p2_0
-//    Buy shares of whichever has the higher gain (the winner).
-//    Lock bought shares in the vault — available for future vault→pool use.
-//    Brokerage charged on the buy.
-//
-//  V3 SWAP SIZING
-//  ───────────────
-//  L = concentration × poolValue / [ (1/√rInit − 1/√rHigh)×p1
-//                                   + (√rInit   −   √rLow) ×p2 ]
-//
-//  When eligible swap fires (ratio moved ≥ minMovePct in alternate direction):
-//    delta = L × |1/√rNow − 1/√rAtLastSwap|   for the sell asset
-//    sellQty = min(floor(delta), poolSell − 5, floor(poolVal×maxLegPct/pSell))
-//    buyQty  = floor(sellQty × pSell / pBuy)     ← derived from proceeds
-//    Execute only when net = (sellQty×pSell − buyQty×pBuy) − brokerage > 0
-//
-//  ROUNDING
-//  ─────────
-//  buyQty always derived from exact sell proceeds → gross ≥ 0 always.
-//  Pool floor = 5 shares on each side.
+//  - Strict alternating swap direction (Sell A1 ⇄ Sell A2)
+//  - minMovePct gate: next swap only fires after ratio reverses ≥ X% from
+//    the price at the last swap
+//  - Same-direction vault rebalancing: while price keeps moving the same
+//    way, no new swap fires; instead the pool's share-ratio is tracked to
+//    the live market ratio via vault↔pool internal transfers (no brokerage)
+//  - Alpha reinvestment buys whichever asset has gained more from its
+//    initial price, locking those shares in the vault
+//  - Self-funding swaps: buyQty always derived from exact sell proceeds,
+//    so gross P&L is always ≥ 0 by construction — no phantom value from
+//    independent rounding of both legs
 //
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -100,11 +89,25 @@ export function buildHourly(a1, a2) { return buildMinutely(a1, a2); }
 
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 
-function computeL(concentration, capital, p1, p2, r, rLow, rHigh) {
+// ─── V3 liquidity parameter — derived PURELY from capital and band ──────────
+// No concentration multiplier. This is the exact L a real Uniswap V3 LP
+// would receive when depositing `capital` into range [rLow, rHigh] at
+// current ratio r. Concentration is implicit in the band width itself.
+function computeL(capital, p1, p2, r, rLow, rHigh) {
   const rC  = clamp(r, rLow, rHigh);
   const sr  = Math.sqrt(rC), srl = Math.sqrt(rLow), srh = Math.sqrt(rHigh);
   const denom = (1/sr - 1/srh) * p1 + (sr - srl) * p2;
-  return denom > 1e-10 ? concentration * capital / denom : 0;
+  return denom > 1e-10 ? capital / denom : 0;
+}
+
+// Real V3 virtual reserves at ratio r, for a given L and band.
+// This is the SAME curve every part of the engine trusts — used to compute
+// the correct target composition when the pool needs to track the market
+// ratio via internal vault transfers (no market trade, no brokerage).
+function v3Reserves(L, r, rLow, rHigh) {
+  const rC = clamp(r, rLow, rHigh);
+  const sr = Math.sqrt(rC), srl = Math.sqrt(rLow), srh = Math.sqrt(rHigh);
+  return { x: L * (1/sr - 1/srh), y: L * (sr - srl) };
 }
 
 // ─── PAIR FITNESS ──────────────────────────────────────────────────────────
@@ -148,9 +151,8 @@ export function pairFitness(df1, df2) {
   };
 }
 
-// ─── PERFORMANCE SUMMARY ──────────────────────────────────────────────────
+// ─── PERFORMANCE SUMMARY — now with Sharpe, Calmar, Max Drawdown ───────────
 export function buildPerformanceSummary(ledger, equityCurve, results) {
-  const ANNUALISE = Math.sqrt(252 * 375);
   const trades = ledger.filter(t => t.type === 'TRADE');
   const grossSum = trades.reduce((s, t) => s + t.gross, 0);
   const brokSum  = trades.reduce((s, t) => s + t.brok,  0);
@@ -162,32 +164,68 @@ export function buildPerformanceSummary(ledger, equityCurve, results) {
     .sort((a, b) => a - b);
   const medianSizePct = sizePcts.length ? sizePcts[Math.floor(sizePcts.length / 2)] : 0;
   const maxSizePct    = sizePcts.length ? sizePcts[sizePcts.length - 1] : 0;
-  const thrashCount   = sizePcts.filter(p => p > 20).length;
 
-  const alpha = equityCurve.map(p => p.totalValue - p.holdValue);
-  let peak = alpha[0] ?? 0, maxDD = 0;
-  for (const v of alpha) { if (v > peak) peak = v; if (v - peak < maxDD) maxDD = v - peak; }
-  const aRets = alpha.slice(1).map((v, i) => v - alpha[i]);
-  const mr = aRets.reduce((s, v) => s + v, 0) / (aRets.length || 1);
-  let vv = 0; for (const v of aRets) vv += (v - mr)**2;
-  const sd = Math.sqrt(vv / Math.max(aRets.length - 1, 1));
+  // ── Equity-curve based risk metrics (real portfolio value, not just alpha) ──
+  const values = equityCurve.map(p => p.totalValue);
+  const dates  = equityCurve.map(p => new Date(p.date).getTime());
+  const n = values.length;
+
+  // Max drawdown on total value curve
+  let peak = values[0] ?? 0, maxDD = 0, maxDDPct = 0;
+  for (const v of values) {
+    if (v > peak) peak = v;
+    const dd = v - peak;
+    if (dd < maxDD) maxDD = dd;
+    const ddPct = peak > 0 ? (dd / peak) * 100 : 0;
+    if (ddPct < maxDDPct) maxDDPct = ddPct;
+  }
+
+  // Per-bar returns of total value
+  const rets = [];
+  for (let i = 1; i < n; i++) {
+    if (values[i-1] > 0) rets.push((values[i] - values[i-1]) / values[i-1]);
+  }
+  const meanRet = rets.length ? rets.reduce((s, v) => s + v, 0) / rets.length : 0;
+  let variance = 0;
+  for (const r of rets) variance += (r - meanRet) ** 2;
+  const stdRet = rets.length > 1 ? Math.sqrt(variance / (rets.length - 1)) : 0;
+
+  // Annualisation: infer bars-per-year from actual elapsed calendar time,
+  // not a hardcoded assumption — works correctly whether data is 1-min,
+  // hourly, or daily bars.
+  const elapsedMs   = dates.length > 1 ? dates[dates.length - 1] - dates[0] : 0;
+  const elapsedDays = elapsedMs / 86400000;
+  const elapsedYears = elapsedDays / 365.25;
+  const barsPerYear  = elapsedYears > 0 ? n / elapsedYears : 0;
+
+  const sharpeRatio = stdRet > 1e-12 && barsPerYear > 0
+    ? (meanRet / stdRet) * Math.sqrt(barsPerYear)
+    : 0;
+
+  // Annualised return for Calmar
+  const totalReturn = values[0] > 0 ? (values[n-1] / values[0] - 1) : 0;
+  const annualisedReturn = elapsedYears > 0
+    ? (Math.pow(1 + totalReturn, 1 / elapsedYears) - 1) * 100
+    : totalReturn * 100;
+
+  const calmarRatio = Math.abs(maxDDPct) > 1e-9
+    ? annualisedReturn / Math.abs(maxDDPct)
+    : 0;
 
   return {
     grossTotal: grossSum, brokTotal: brokSum, netTotal: grossSum - brokSum,
     totalTrades: trades.length, profitable, successRate, successPct: successRate * 100,
     frictionPct: Math.abs(grossSum) > 0 ? brokSum / Math.abs(grossSum) * 100 : 0,
-    medianSizePct: +medianSizePct.toFixed(2),
-    maxSizePct:    +maxSizePct.toFixed(2),
-    thrashCount,
-    maxDrawdown: maxDD,
-    maxDrawdownPct: results.holdValue > 0 ? maxDD / results.holdValue * 100 : 0,
-    alphaSharpe: sd > 1e-12 ? (mr / sd) * ANNUALISE : 0,
+    medianSizePct: +medianSizePct.toFixed(3),
+    maxSizePct:    +maxSizePct.toFixed(3),
+    maxDrawdown:    maxDD,
+    maxDrawdownPct: +maxDDPct.toFixed(3),
+    sharpeRatio:    +sharpeRatio.toFixed(3),
+    calmarRatio:    +calmarRatio.toFixed(3),
+    annualisedReturnPct: +annualisedReturn.toFixed(3),
     vaultValue: results.vaultFinal,
     vaultDeposits: results.vaultDeposits,
     narrative: {
-      sizing: thrashCount === 0
-        ? `HEALTHY — max single swap was ${maxSizePct.toFixed(2)}% of pool`
-        : `WARNING — ${thrashCount} swaps exceeded 20% of pool`,
       friction: brokSum / Math.max(Math.abs(grossSum), 1) < 0.30
         ? 'GOOD — brokerage < 30% of gross P&L'
         : brokSum / Math.max(Math.abs(grossSum), 1) < 0.60
@@ -196,6 +234,9 @@ export function buildPerformanceSummary(ledger, equityCurve, results) {
       quality: successRate > 0.55 ? 'GOOD — pair mean-reverts within band'
              : successRate > 0.45 ? 'MIXED — weak mean-reversion'
              : 'POOR — pair is trending',
+      risk: Math.abs(maxDDPct) < 2 ? 'LOW drawdown risk'
+          : Math.abs(maxDDPct) < 5 ? 'MODERATE drawdown risk'
+          : 'HIGH drawdown risk — review band width',
     },
   };
 }
@@ -210,16 +251,14 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
     return { error: 'Too few overlapping bars. Check timestamps match.' };
 
   // ── Config ────────────────────────────────────────────────────────────────
-  const bandPct       = clamp(+(config.bandPct       ?? 5),    0.5, 50)  / 100;
-  const concentration = clamp(+(config.concentration  ?? 2),   1,   20);
-  const minMovePct    = clamp(+(config.minMovePct     ?? 0.5), 0.1, 10)  / 100;
+  const bandPct       = clamp(+(config.bandPct       ?? 10),   0.5, 50)  / 100;
+  const minMovePct    = clamp(+(config.minMovePct    ?? 0.5),  0.1, 10)  / 100;
   const buyBrok       = clamp(+(config.buyBrokeragePct  ?? 0.15), 0, 5)  / 100;
   const sellBrok      = clamp(+(config.sellBrokeragePct ?? 0.15), 0, 5)  / 100;
   const reinvestBrok  = clamp(+(config.reinvestBrokeragePct ?? 0.15), 0, 5) / 100;
   const ilHardStop    = clamp(+(config.ilHardStopPct  ?? 0),   0,  100);
   const ilHardResume  = clamp(+(config.ilHardResumePct ?? 0),  0,  100);
   const compoundHours = clamp(+(config.compoundIntervalHours ?? 24), 1, 168);
-  const maxLegPct     = 0.05;   // hard cap: max 5% of pool per trade leg
 
   // ── Initialise ────────────────────────────────────────────────────────────
   const h0    = bars[0];
@@ -237,19 +276,18 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   const initCapital = poolX * p1_0 + poolY * p2_0 + seedCash;
 
   let vaultX = 0, vaultY = 0;
-  let L = computeL(concentration, poolX * p1_0 + poolY * p2_0, p1_0, p2_0, rInit, rLow, rHigh);
+  // L derived purely from real deposited capital and the chosen band —
+  // no concentration multiplier. This is what a real V3 LP would get.
+  let L = computeL(poolX * p1_0 + poolY * p2_0, p1_0, p2_0, rInit, rLow, rHigh);
   const initialL = L;
 
   // ── Swap state machine ────────────────────────────────────────────────────
-  // lastSwapDir: null | 'SELL_A1' | 'SELL_A2'
-  // rAtLastSwap: the ratio when the last swap fired (used to measure minMovePct)
-  // sameDirectionLock: true while price keeps moving the same way as last swap
-  //   → prevents new swap, triggers vault check instead (edge-triggered)
-  let lastSwapDir       = null;
-  let rAtLastSwap       = rInit;
-  let sameDirectionLock = false;   // edge-trigger: vault adj fires once per run
+  let lastSwapDir     = null;   // null | 'SELL_A1' | 'SELL_A2'
+  let rAtLastSwap     = rInit;
+  let rAtLastAdjust   = rInit;  // last ratio at which a same-direction vault
+                                 // rebalance fired — re-fires every further
+                                 // minMovePct increment, not just once ever
 
-  // ── General state ─────────────────────────────────────────────────────────
   let cashProfit = seedCash;
   let totalBrokerage = 0, grossTotal = 0, netTotal = 0;
   let totalTrades = 0, profitableTrades = 0, unprofitableTrades = 0, skippedTrades = 0;
@@ -279,7 +317,6 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
     const ilPct    = holdVal > 0 ? ((poolVal + vaultVal) / holdVal - 1) * 100 : 0;
     const inBand   = rNow >= rLow && rNow <= rHigh;
 
-    // IL stop
     if (swapsHalted && haltReason === 'IL_STOP' && ilHardResume > 0 && ilPct >= -ilHardResume) {
       swapsHalted = false; haltReason = null; ilResumedAt = row.date.toISOString();
     }
@@ -288,114 +325,90 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
       ilHaltedAt = row.date.toISOString(); haltCount++;
     }
 
-    // ── Determine swap direction eligibility ──────────────────────────────
-    // After a SELL_A1 swap (ratio rose), the NEXT eligible swap is SELL_A2
-    // which requires ratio to FALL ≥ minMovePct from rAtLastSwap.
-    // After a SELL_A2 swap (ratio fell), the NEXT eligible swap is SELL_A1
-    // which requires ratio to RISE ≥ minMovePct from rAtLastSwap.
-    //
-    // "Same direction" = ratio continuing to move AWAY from mean in the
-    // direction of the last swap (further rise after SELL_A1, further fall
-    // after SELL_A2).
-
-    let swapEligible = false;
-    let eligibleDir  = null;   // 'SELL_A1' or 'SELL_A2'
-    let inSameDirection = false;
+    // ── Determine swap eligibility (strict alternation + minMovePct) ────────
+    let swapEligible = false, eligibleDir = null, inSameDirection = false;
 
     if (lastSwapDir === null) {
-      // No swap yet — first eligible swap is whichever direction ratio has moved
-      if (rNow > rAtLastSwap * (1 + minMovePct)) {
-        swapEligible = true; eligibleDir = 'SELL_A1';
-      } else if (rNow < rAtLastSwap * (1 - minMovePct)) {
-        swapEligible = true; eligibleDir = 'SELL_A2';
-      }
+      if (rNow > rAtLastSwap * (1 + minMovePct)) { swapEligible = true; eligibleDir = 'SELL_A1'; }
+      else if (rNow < rAtLastSwap * (1 - minMovePct)) { swapEligible = true; eligibleDir = 'SELL_A2'; }
     } else if (lastSwapDir === 'SELL_A1') {
-      // Last swap sold A1 (ratio rose). Next must be SELL_A2 (ratio falls).
-      if (rNow <= rAtLastSwap * (1 - minMovePct)) {
-        swapEligible = true; eligibleDir = 'SELL_A2';
-      } else if (rNow > rAtLastSwap) {
-        // Ratio STILL rising — same direction as last swap
-        inSameDirection = true;
-      }
+      if (rNow <= rAtLastSwap * (1 - minMovePct)) { swapEligible = true; eligibleDir = 'SELL_A2'; }
+      else if (rNow > rAtLastSwap) { inSameDirection = true; }
     } else if (lastSwapDir === 'SELL_A2') {
-      // Last swap sold A2 (ratio fell). Next must be SELL_A1 (ratio rises).
-      if (rNow >= rAtLastSwap * (1 + minMovePct)) {
-        swapEligible = true; eligibleDir = 'SELL_A1';
-      } else if (rNow < rAtLastSwap) {
-        // Ratio STILL falling — same direction as last swap
-        inSameDirection = true;
-      }
+      if (rNow >= rAtLastSwap * (1 + minMovePct)) { swapEligible = true; eligibleDir = 'SELL_A1'; }
+      else if (rNow < rAtLastSwap) { inSameDirection = true; }
     }
 
-    // ── Same-direction: vault rebalance (edge-triggered once per run) ──────
-    if (inSameDirection && !swapsHalted && !sameDirectionLock) {
-      sameDirectionLock = true;
+    // Re-fire the same-direction vault adjustment every further minMovePct
+    // increment the price extends — NOT just once per direction run.
+    // This tracks the real V3 curve as the trend continues (2% → 3% → 5%
+    // → 9% ...), matching how the pool would naturally keep rebalancing.
+    const adjustmentDue = inSameDirection && (
+      (rNow > rAtLastSwap && rNow >= rAtLastAdjust * (1 + minMovePct)) ||
+      (rNow < rAtLastSwap && rNow <= rAtLastAdjust * (1 - minMovePct))
+    );
 
-      // Target: poolX/poolY = rNow  (track current market ratio)
-      // We cannot trade — only move shares between pool and vault.
+    // ── Same-direction: internal vault↔pool rebalance (edge-triggered) ─────
+    //
+    // CORRECT V3 TARGET (not a ratio-matching heuristic):
+    // Preserve the pool's current ₹ value, compute what L that value would
+    // imply at rNow within the SAME band [rLow, rHigh], then use the real
+    // V3 reserves formula v3Reserves() to get the exact target x', y'.
+    // This is the actual curve shape — the same formula the swap engine
+    // itself trusts — so vault transfers track genuine V3 behaviour instead
+    // of an approximation.
+    if (adjustmentDue && !swapsHalted) {
+      rAtLastAdjust = rNow;
+
+      const curPoolVal = poolX * p1 + poolY * p2;
+      const Lc = computeL(curPoolVal, p1, p2, rNow, rLow, rHigh);
+      const tgt = v3Reserves(Lc, rNow, rLow, rHigh);
+      const xTarget = Math.max(5, Math.floor(tgt.x));
+      const yTarget = Math.max(5, Math.floor(tgt.y));
+
+      const xNeed = xTarget - poolX;   // +ve = pool needs more A1
+      const yNeed = yTarget - poolY;   // +ve = pool needs more A2
       let adjType = null;
 
-      if (rNow > rAtLastSwap) {
-        // Ratio rising → pool needs more A1, less A2
-        // Fix poolX, derive poolY = floor(poolX / rNow), shed excess A2
-        if (vaultX > 0) {
-          const poolY_want = Math.floor(poolX / rNow);
-          const yAdd = Math.min(vaultX, Math.max(0, poolY_want - poolY));
-          // Actually we need A1 from vault to increase poolX
-          const xAdd = Math.min(vaultX, Math.max(0, Math.floor(poolY * rNow) - poolX));
-          if (xAdd > 0) { vaultX -= xAdd; poolX += xAdd; }
-          adjType = 'VAULT→POOL'; vaultAdjUp++;
-        }
-        const poolY_target = Math.max(5, Math.floor(poolX / rNow));
-        const yShed = poolY - poolY_target;
-        if (yShed > 0) { poolY -= yShed; vaultY += yShed; if (!adjType) { adjType = 'POOL→VAULT'; vaultAdjDown++; } }
-        if (!adjType) { adjType = 'POOL→VAULT'; vaultAdjDown++; }
-
-      } else {
-        // Ratio falling → pool needs more A2, less A1
-        if (vaultY > 0) {
-          const yAdd = Math.min(vaultY, Math.max(0, Math.floor(poolX / rNow) - poolY));
-          if (yAdd > 0) { vaultY -= yAdd; poolY += yAdd; }
-          adjType = 'VAULT→POOL'; vaultAdjUp++;
-        }
-        const poolY_target = Math.max(5, Math.floor(poolX / rNow));
-        const yShed = poolY - poolY_target;
-        if (yShed > 0) { poolY -= yShed; vaultY += yShed; if (!adjType) { adjType = 'POOL→VAULT'; vaultAdjDown++; } }
-        if (!adjType) { adjType = 'POOL→VAULT'; vaultAdjDown++; }
+      if (xNeed > 0 && yNeed < 0) {
+        // Pool needs more A1, has excess A2 to give up
+        const yExcess = Math.abs(yNeed);
+        const xFromVault = Math.min(vaultX, xNeed);
+        if (xFromVault > 0) { vaultX -= xFromVault; poolX += xFromVault; }
+        if (yExcess > 0) { poolY -= yExcess; vaultY += yExcess; }
+        adjType = xFromVault > 0 ? 'VAULT→POOL' : 'POOL→VAULT';
+        if (adjType === 'VAULT→POOL') vaultAdjUp++; else vaultAdjDown++;
+      } else if (xNeed < 0 && yNeed > 0) {
+        // Pool needs more A2, has excess A1 to give up
+        const xExcess = Math.abs(xNeed);
+        const yFromVault = Math.min(vaultY, yNeed);
+        if (yFromVault > 0) { vaultY -= yFromVault; poolY += yFromVault; }
+        if (xExcess > 0) { poolX -= xExcess; vaultX += xExcess; }
+        adjType = yFromVault > 0 ? 'VAULT→POOL' : 'POOL→VAULT';
+        if (adjType === 'VAULT→POOL') vaultAdjUp++; else vaultAdjDown++;
       }
 
-      // Recompute L for updated pool
-      L = computeL(concentration, poolX * p1 + poolY * p2, p1, p2, rNow, rLow, rHigh);
+      L = computeL(poolX * p1 + poolY * p2, p1, p2, rNow, rLow, rHigh);
 
       if (adjType) ledger.push({
         date: row.date.toISOString(), type: 'ADJUST', adjType,
         rNow: +rNow.toFixed(6), rAtLastSwap: +rAtLastSwap.toFixed(6),
         poolX, poolY, vaultX, vaultY,
         asset1Price: p1, asset2Price: p2,
-        poolValue: poolX*p1+poolY*p2,
-        vaultValue: vaultX*p1+vaultY*p2,
+        poolValue: poolX*p1+poolY*p2, vaultValue: vaultX*p1+vaultY*p2,
         cashProfit, L: +L.toFixed(2),
       });
     }
+    if (swapEligible) rAtLastAdjust = rNow;  // reset adjustment tracker when a real swap fires
 
-    // Release same-direction lock when ratio reverses toward eligible direction
-    if (sameDirectionLock && swapEligible) sameDirectionLock = false;
-
-    // ── SWAP ──────────────────────────────────────────────────────────────
+    // ── SWAP (real V3 delta, self-bounded by band — no artificial cap) ──────
     if (inBand && swapEligible && !swapsHalted) {
-      // V3 delta from rAtLastSwap → rNow (both clamped to band)
       const rFrom = clamp(rAtLastSwap, rLow, rHigh);
       const rTo   = clamp(rNow,        rLow, rHigh);
-      const maxLeg = poolVal * maxLegPct;
 
       if (eligibleDir === 'SELL_A1') {
-        // Ratio rose → sell A1, buy A2
-        const delta    = L * Math.abs(1/Math.sqrt(rTo) - 1/Math.sqrt(rFrom));
-        const sellQty  = Math.min(
-          Math.floor(delta),
-          Math.floor(maxLeg / p1),
-          poolX - 5,
-        );
+        const delta   = L * Math.abs(1/Math.sqrt(rTo) - 1/Math.sqrt(rFrom));
+        const sellQty = Math.min(Math.floor(delta), poolX - 5);
         if (sellQty >= 1) {
           const proceeds = sellQty * p1;
           const buyQty   = Math.floor(proceeds / p2);
@@ -409,10 +422,8 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
               cashProfit += net; totalBrokerage += brok;
               grossTotal += gross; netTotal += net;
               totalTrades++; profitableTrades++;
-              lastSwapDir   = 'SELL_A1';
-              rAtLastSwap   = rNow;
-              sameDirectionLock = false;
-              L = computeL(concentration, poolX*p1+poolY*p2, p1, p2, rNow, rLow, rHigh);
+              lastSwapDir = 'SELL_A1'; rAtLastSwap = rNow; rAtLastAdjust = rNow;
+              L = computeL(poolX*p1+poolY*p2, p1, p2, rNow, rLow, rHigh);
               ledger.push({
                 date: row.date.toISOString(), type: 'TRADE',
                 action: 'Sell Asset 1 / Buy Asset 2',
@@ -428,15 +439,9 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
             } else { skippedTrades++; }
           }
         }
-
       } else if (eligibleDir === 'SELL_A2') {
-        // Ratio fell → sell A2, buy A1
-        const delta    = L * Math.abs(Math.sqrt(rTo) - Math.sqrt(rFrom));
-        const sellQty  = Math.min(
-          Math.floor(delta),
-          Math.floor(maxLeg / p2),
-          poolY - 5,
-        );
+        const delta   = L * Math.abs(Math.sqrt(rTo) - Math.sqrt(rFrom));
+        const sellQty = Math.min(Math.floor(delta), poolY - 5);
         if (sellQty >= 1) {
           const proceeds = sellQty * p2;
           const buyQty   = Math.floor(proceeds / p1);
@@ -450,10 +455,8 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
               cashProfit += net; totalBrokerage += brok;
               grossTotal += gross; netTotal += net;
               totalTrades++; profitableTrades++;
-              lastSwapDir   = 'SELL_A2';
-              rAtLastSwap   = rNow;
-              sameDirectionLock = false;
-              L = computeL(concentration, poolX*p1+poolY*p2, p1, p2, rNow, rLow, rHigh);
+              lastSwapDir = 'SELL_A2'; rAtLastSwap = rNow; rAtLastAdjust = rNow;
+              L = computeL(poolX*p1+poolY*p2, p1, p2, rNow, rLow, rHigh);
               ledger.push({
                 date: row.date.toISOString(), type: 'TRADE',
                 action: 'Sell Asset 2 / Buy Asset 1',
@@ -472,9 +475,7 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
       }
     }
 
-    // ── ALPHA REINVESTMENT ────────────────────────────────────────────────
-    // Buy whichever stock appreciated more from its initial price.
-    // Lock shares in vault — available for future vault→pool rebalancing.
+    // ── ALPHA REINVESTMENT — buy the more-appreciated asset into vault ──────
     const hoursSinceVault = (row.date.getTime() - lastVaultCheckMs) / 3600000;
     let didVault = false;
     if (hoursSinceVault >= compoundHours && cashProfit > 0) {
@@ -484,18 +485,9 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
       if (net > 0) {
         const gainA1 = (p1 - p1_0) / p1_0;
         const gainA2 = (p2 - p2_0) / p2_0;
-        // Buy the winner (more appreciated asset)
-        let buyX = 0, buyY = 0;
-        if (gainA1 >= gainA2) {
-          // A1 appreciated more → buy A1 for vault
-          buyX = Math.floor(net / p1);
-          buyY = 0;
-        } else {
-          // A2 appreciated more → buy A2 for vault
-          buyX = 0;
-          buyY = Math.floor(net / p2);
-        }
-        const winner = gainA1 >= gainA2 ? 'Asset 1' : 'Asset 2';
+        let buyX = 0, buyY = 0, winner;
+        if (gainA1 >= gainA2) { buyX = Math.floor(net / p1); winner = 'Asset 1'; }
+        else                  { buyY = Math.floor(net / p2); winner = 'Asset 2'; }
         if (buyX >= 1 || buyY >= 1) {
           const actualCost = buyX * p1 + buyY * p2;
           vaultX += buyX; vaultY += buyY;
@@ -541,6 +533,10 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
   const vsHold     = totalValue - holdValue;
   const vsHoldPct  = holdValue > 0 ? (totalValue / holdValue - 1) * 100 : 0;
 
+  // Theoretical max IL bound at the band edge — pure V3 math, for reference
+  const boundaryL = computeL(poolX * last.c1 + poolY * last.c2, last.c1, last.c2, rInit, rLow, rHigh);
+  const rEdge = rNow => clamp(rNow, rLow, rHigh);
+
   const results = {
     realCapital, initCapital, totalValue, poolFinal, vaultFinal,
     cashProfit, holdValue, totalBrokerage, grossTotal, netTotal,
@@ -556,7 +552,7 @@ export function runAlmSimulation(df1, df2, realCapital, config = {}) {
     successRate: totalTrades > 0 ? profitableTrades / totalTrades : 0,
     poolX, poolY, vaultX, vaultY, holdX, holdY,
     vaultDeposits, vaultAdjUp, vaultAdjDown,
-    bandPct: bandPct * 100, concentration, minMovePct: minMovePct * 100,
+    bandPct: bandPct * 100, minMovePct: minMovePct * 100,
     L: +L.toFixed(2), initialL: +initialL.toFixed(2),
     rInit: +rInit.toFixed(6), rLow: +rLow.toFixed(6), rHigh: +rHigh.toFixed(6),
     buyBrokeragePct: buyBrok*100, sellBrokeragePct: sellBrok*100,

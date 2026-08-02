@@ -70,7 +70,6 @@ function setStatus(type, msg) {
 function getConfig() {
   return {
     bandPct:               +$('bandPct').value,
-    concentration:         +$('concentration').value,
     minMovePct:            +$('minMovePct').value,
     buyBrokeragePct:       +$('buyBrokeragePct').value,
     sellBrokeragePct:      +$('sellBrokeragePct').value,
@@ -181,8 +180,19 @@ function renderDiagnostics(p, r) {
         <div class="diag-row"><span>Profitable</span>
           <strong class="pos">${p.profitable} (${dec(p.successPct,0)}%)</strong></div>
         <div class="diag-row"><span>Skipped (net ≤ 0)</span><strong>${r.skippedTrades}</strong></div>
-        <div class="diag-row"><span>Alpha Sharpe</span><strong>${dec(p.alphaSharpe,3)}</strong></div>
         <div class="diag-note">${p.narrative.quality}</div>
+      </div>
+      <div class="diag-box">
+        <div class="diag-title">Risk Metrics</div>
+        <div class="diag-row"><span>Sharpe ratio</span>
+          <strong class="${p.sharpeRatio>=0?'pos':'neg'}">${dec(p.sharpeRatio,3)}</strong></div>
+        <div class="diag-row"><span>Calmar ratio</span>
+          <strong class="${p.calmarRatio>=0?'pos':'neg'}">${dec(p.calmarRatio,3)}</strong></div>
+        <div class="diag-row"><span>Max drawdown</span>
+          <strong class="neg">${dec(p.maxDrawdownPct,2)}%</strong></div>
+        <div class="diag-row"><span>Annualised return</span>
+          <strong class="${p.annualisedReturnPct>=0?'pos':'neg'}">${dec(p.annualisedReturnPct,2)}%</strong></div>
+        <div class="diag-note">${p.narrative.risk}</div>
       </div>
     </div>`;
 }
@@ -197,7 +207,6 @@ function renderStats(r, a1, a2) {
     { label:'Total brokerage',               value: '−'+inr(r.totalBrokerage), cls:'down' },
     { label:'IL % (pool+vault vs hold)',      value: pct(r.ilPct,2),          cls:r.ilPct>=0?'up':'down' },
     { label:'Band ± %',                      value: `±${dec(r.bandPct,1)}%`, cls:'' },
-    { label:'Concentration',                 value: `${r.concentration}×`,    cls:'' },
     { label:'Min move %',                    value: `${dec(r.minMovePct,1)}%`, cls:'' },
     { label:`Pool ${a1}`,                   value: `${qty(r.holdX)} → ${qty(r.poolX)}`, cls:'' },
     { label:`Pool ${a2}`,                   value: `${qty(r.holdY)} → ${qty(r.poolY)}`, cls:'' },
