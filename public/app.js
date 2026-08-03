@@ -158,21 +158,21 @@ function renderDiagnostics(p, r) {
       </div>
       <div class="diag-box">
         <div class="diag-title">Trading Edge</div>
+        <div class="diag-row"><span>Net swap P&amp;L</span>
+          <strong class="${p.netTotal>=0?'pos':'neg'}">${p.netTotal>=0?'+':''}${inr(p.netTotal)}  (${p.netSwapPnLPct>=0?'+':''}${dec(p.netSwapPnLPct,3)}%)</strong></div>
         <div class="diag-row"><span>Gross P&amp;L</span>
           <strong class="${p.grossTotal>=0?'pos':'neg'}">${p.grossTotal>=0?'+':''}${inr(p.grossTotal)}</strong></div>
         <div class="diag-row"><span>Brokerage</span><strong class="neg">−${inr(p.brokTotal)}</strong></div>
-        <div class="diag-row"><span>Net cash</span>
-          <strong class="${p.netTotal>=0?'pos':'neg'}">${p.netTotal>=0?'+':''}${inr(p.netTotal)}</strong></div>
         <div class="diag-row"><span>Friction</span><strong>${dec(p.frictionPct,1)}% of gross</strong></div>
         <div class="diag-note">${p.narrative.friction}</div>
       </div>
       <div class="diag-box">
-        <div class="diag-title">Alpha Vault</div>
-        <div class="diag-row"><span>Vault value</span><strong class="teal">${inr(p.vaultValue)}</strong></div>
+        <div class="diag-title">Vault Composition</div>
+        <div class="diag-row"><span>Total vault value</span><strong class="teal">${inr(p.vaultValue)}</strong></div>
+        <div class="diag-row"><span>— from real trading profit</span><strong class="pos">${inr(p.alphaReinvestedCostBasis)}</strong></div>
+        <div class="diag-row"><span>— from trend-tracking (not profit)</span><strong>${inr(p.vaultFromTrendTracking)}</strong></div>
         <div class="diag-row"><span>Deposits</span><strong>${p.vaultDeposits}</strong></div>
-        <div class="diag-row"><span>Vault adj (V→P)</span><strong>${r.vaultAdjUp}</strong></div>
-        <div class="diag-row"><span>Vault adj (P→V)</span><strong>${r.vaultAdjDown}</strong></div>
-        <div class="diag-note">Alpha buys the outperforming stock. Vault shares used for same-direction rebalancing.</div>
+        <div class="diag-note">Only the "trading profit" line is real alpha. The rest is pool inventory relocated during trend-tracking — still your capital, but not profit.</div>
       </div>
       <div class="diag-box">
         <div class="diag-title">Trade Quality</div>
@@ -183,16 +183,16 @@ function renderDiagnostics(p, r) {
         <div class="diag-note">${p.narrative.quality}</div>
       </div>
       <div class="diag-box">
-        <div class="diag-title">Risk Metrics</div>
+        <div class="diag-title">Risk Metrics (of excess return vs hold)</div>
         <div class="diag-row"><span>Sharpe ratio</span>
           <strong class="${p.sharpeRatio>=0?'pos':'neg'}">${dec(p.sharpeRatio,3)}</strong></div>
         <div class="diag-row"><span>Calmar ratio</span>
           <strong class="${p.calmarRatio>=0?'pos':'neg'}">${dec(p.calmarRatio,3)}</strong></div>
-        <div class="diag-row"><span>Max drawdown</span>
-          <strong class="neg">${dec(p.maxDrawdownPct,2)}%</strong></div>
-        <div class="diag-row"><span>Annualised return</span>
+        <div class="diag-row"><span>Max drawdown (of alpha)</span>
+          <strong class="neg">${dec(p.maxDrawdownPct,3)}%</strong></div>
+        <div class="diag-row"><span>Annualised alpha</span>
           <strong class="${p.annualisedReturnPct>=0?'pos':'neg'}">${dec(p.annualisedReturnPct,2)}%</strong></div>
-        <div class="diag-note">${p.narrative.risk}</div>
+        <div class="diag-note">${p.narrative.risk} Measured on excess return over hold, not raw portfolio value — isolates strategy skill from ordinary market price movement.</div>
       </div>
     </div>`;
 }
@@ -201,8 +201,9 @@ function renderStats(r, a1, a2) {
   const cells = [
     { label:'Total value (pool+vault+cash)', value: inr(r.totalValue),       cls:'' },
     { label:'Pool asset value',              value: inr(r.poolFinal),         cls:'' },
-    { label:'Vault value',                   value: inr(r.vaultFinal),        cls:'teal' },
-    { label:'Cash reserve',                  value: inr(r.cashProfit),        cls: r.cashProfit>=0?'up':'down' },
+    { label:'Vault value (see breakdown above)', value: inr(r.vaultFinal),    cls:'teal' },
+    { label:'Uninvested cash reserve',       value: inr(r.cashProfit),        cls: r.cashProfit>=0?'up':'down' },
+    { label:'Net swap P&L',                  value: (r.netTotal>=0?'+':'')+inr(r.netTotal), cls:r.netTotal>=0?'up':'down' },
     { label:'Gross swap P&L',                value: (r.grossTotal>=0?'+':'')+inr(r.grossTotal), cls:r.grossTotal>=0?'up':'down' },
     { label:'Total brokerage',               value: '−'+inr(r.totalBrokerage), cls:'down' },
     { label:'IL % (pool+vault vs hold)',      value: pct(r.ilPct,2),          cls:r.ilPct>=0?'up':'down' },
